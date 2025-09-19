@@ -7,8 +7,32 @@
     "activeTab",
     "storage",
     "scripting",
-    "clipboardWrite"
+    "clipboardWrite",
+    "notifications"
   ],
+  "commands": {
+    "open-popup": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+R",
+        "mac": "Command+Shift+R"
+      },
+      "description": "Open Recall Me popup"
+    },
+    "quick-search": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Quick search with last query"
+    },
+    "toggle-study-mode": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+T",
+        "mac": "Command+Shift+T"
+      },
+      "description": "Toggle study mode on/off"
+    }
+  },
   "host_permissions": [
     "https://chat.openai.com/*",
     "https://www.perplexity.ai/*",
@@ -19,6 +43,12 @@
     "default_popup": "popup.html",
     "default_title": "Recall Me Study Assistant"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["libs/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": [

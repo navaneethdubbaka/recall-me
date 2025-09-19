@@ -5,18 +5,22 @@ console.log('Recall Me content script loaded');
 
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'pasteContent') {
-    const success = pasteToChat(request.content, request.fullResponse, request.webhookResponse);
+  if (request.action === 'ping') {
+    // Respond to ping to confirm content script is ready
+    sendResponse({ ready: true });
+  } else if (request.action === 'pasteContent') {
+    const success = pasteToChat(request.content, request.fullResponse, request.webhookResponse, request.aiResponse);
     sendResponse({ success });
   }
 });
 
-function pasteToChat(content, fullResponse = {}, webhookResponse = {}) {
+function pasteToChat(content, fullResponse = {}, webhookResponse = {}, aiResponse = {}) {
   console.log('=== CONTENT SCRIPT DEBUG ===');
   console.log('Attempting to paste content:', content.substring(0, 100) + '...');
   console.log('Full content length:', content.length);
   console.log('Full response keys:', Object.keys(fullResponse));
   console.log('Webhook response:', webhookResponse);
+  console.log('AI response:', aiResponse);
   console.log('Full content received:', content);
   
   // More comprehensive selectors for ChatGPT
@@ -68,35 +72,29 @@ function pasteToChat(content, fullResponse = {}, webhookResponse = {}) {
       // Clear existing content first
       textarea.innerHTML = '';
       
-      // Create complete content with webhook response
-      let completeContent = content;
+      // Create complete content - ONLY webhook response if available
+      let completeContent = '';
       
-      // Add webhook response if available
+      // Add webhook response if available - ONLY webhook response, nothing else
       if (webhookResponse && Object.keys(webhookResponse).length > 0) {
-        console.log('Adding webhook response...');
-        completeContent += '\n\n--- WEBHOOK RESPONSE ---\n';
-        completeContent += JSON.stringify(webhookResponse, null, 2);
-        console.log('✓ Webhook response added');
-      }
-      
-      // Add full response metadata if available
-      if (fullResponse && Object.keys(fullResponse).length > 0) {
-        console.log('Adding full response metadata...');
-        completeContent += '\n\n--- FULL RESPONSE METADATA ---\n';
+        console.log('Adding webhook response only...');
+        completeContent = JSON.stringify(webhookResponse, null, 2);
         
-        // Add key information from full response
-        if (fullResponse.hits) {
-          completeContent += `\nHits: ${fullResponse.hits.length} results found\n`;
-        }
-        if (fullResponse.image_paths) {
-          completeContent += `Image Paths: ${Object.keys(fullResponse.image_paths).length} image paths\n`;
+        // Copy webhook response to clipboard
+        try {
+          navigator.clipboard.writeText(completeContent).then(() => {
+            console.log('✓ Webhook response copied to clipboard (content script)');
+          }).catch(err => {
+            console.error('Failed to copy webhook response to clipboard (content script):', err);
+          });
+        } catch (error) {
+          console.error('Clipboard API not available (content script):', error);
         }
         
-        // Add the complete response as JSON
-        completeContent += '\nComplete Response:\n';
-        completeContent += JSON.stringify(fullResponse, null, 2);
-        
-        console.log('✓ Full response metadata added');
+        console.log('✓ Webhook response only added');
+      } else {
+        // Fallback to original content if no webhook response
+        completeContent = content;
       }
       
       // Set the complete content as text (no HTML processing needed since it's text-only)
@@ -105,17 +103,25 @@ function pasteToChat(content, fullResponse = {}, webhookResponse = {}) {
       console.log('✓ Complete content injected successfully');
       
     } else if (textarea.tagName === 'TEXTAREA') {
-      // For regular textareas, create complete content
-      let completeContent = content;
+      // For regular textareas, only paste webhook response
+      let completeContent = '';
       
       if (webhookResponse && Object.keys(webhookResponse).length > 0) {
-        completeContent += '\n\n--- WEBHOOK RESPONSE ---\n';
-        completeContent += JSON.stringify(webhookResponse, null, 2);
-      }
-      
-      if (fullResponse && Object.keys(fullResponse).length > 0) {
-        completeContent += '\n\n--- FULL RESPONSE METADATA ---\n';
-        completeContent += JSON.stringify(fullResponse, null, 2);
+        completeContent = JSON.stringify(webhookResponse, null, 2);
+        
+        // Copy webhook response to clipboard
+        try {
+          navigator.clipboard.writeText(completeContent).then(() => {
+            console.log('✓ Webhook response copied to clipboard (textarea)');
+          }).catch(err => {
+            console.error('Failed to copy webhook response to clipboard (textarea):', err);
+          });
+        } catch (error) {
+          console.error('Clipboard API not available (textarea):', error);
+        }
+      } else {
+        // Fallback to original content if no webhook response
+        completeContent = content;
       }
       
       textarea.value = completeContent;

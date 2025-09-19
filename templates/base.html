@@ -13,7 +13,17 @@
     :root { color-scheme: light dark; }
   </style>
   <script>
-    // Minimal progressive enhancement: none required
+    // Highlight active navigation link
+    document.addEventListener('DOMContentLoaded', function() {
+      const currentPath = window.location.pathname;
+      const navLinks = document.querySelectorAll('nav a');
+      
+      navLinks.forEach(link => {
+        if (link.getAttribute('href') === currentPath) {
+          link.classList.add('active');
+        }
+      });
+    });
   </script>
   <noscript></noscript>
   <!-- Clean HTML/CSS only UI -->
@@ -24,6 +34,7 @@
     <h1>Recall Me</h1>
     <nav>
       <a href="/">Home</a>
+      <a href="/library">Document Library</a>
     </nav>
   </header>
   <main class="container">

@@ -7,19 +7,37 @@ document.addEventListener('DOMContentLoaded', async () => {
   const apiUrlInput = document.getElementById('apiUrl');
   const queryInput = document.getElementById('query');
   const kInput = document.getElementById('k');
+  const webhookUrlInput = document.getElementById('webhookUrl');
+  const enableAICheckbox = document.getElementById('enableAI');
   const searchBtn = document.getElementById('searchBtn');
   const loading = document.getElementById('loading');
   const error = document.getElementById('error');
   const success = document.getElementById('success');
+  const saveSearchCheckbox = document.getElementById('saveSearch');
+  const savedSearchesBtn = document.getElementById('savedSearchesBtn');
+  const savedSearchesModal = document.getElementById('savedSearchesModal');
+  const closeModal = document.getElementById('closeModal');
+  const savedSearchesList = document.getElementById('savedSearchesList');
+  const clearAllSearches = document.getElementById('clearAllSearches');
+  const exportFormatSelect = document.getElementById('exportFormat');
+  const documentLibraryBtn = document.getElementById('documentLibraryBtn');
+  const documentLibraryModal = document.getElementById('documentLibraryModal');
+  const closeLibraryModal = document.getElementById('closeLibraryModal');
+  const documentLibraryList = document.getElementById('documentLibraryList');
+  const refreshLibrary = document.getElementById('refreshLibrary');
 
   // Load saved settings
-  const result = await chrome.storage.sync.get(['studyMode', 'apiUrl']);
+  const result = await chrome.storage.sync.get(['studyMode', 'apiUrl', 'webhookUrl', 'enableAI']);
   const studyMode = result.studyMode || false;
   const savedApiUrl = result.apiUrl || 'http://localhost:5000';
+  const savedWebhookUrl = result.webhookUrl || '';
+  const enableAI = result.enableAI || false;
 
   // Update UI
   updateUI(studyMode);
   apiUrlInput.value = savedApiUrl;
+  webhookUrlInput.value = savedWebhookUrl;
+  enableAICheckbox.checked = enableAI;
 
   // Toggle study mode
   studyToggle.addEventListener('click', async () => {
@@ -33,11 +51,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     await chrome.storage.sync.set({ apiUrl: apiUrlInput.value });
   });
 
-  // Search and paste
+  // Save webhook URL on change
+  webhookUrlInput.addEventListener('change', async () => {
+    await chrome.storage.sync.set({ webhookUrl: webhookUrlInput.value });
+  });
+
+  // Save AI enable setting on change
+  enableAICheckbox.addEventListener('change', async () => {
+    await chrome.storage.sync.set({ enableAI: enableAICheckbox.checked });
+  });
+
+  // Search and export
   searchBtn.addEventListener('click', async () => {
     const query = queryInput.value.trim();
     const k = parseInt(kInput.value) || 5;
     const apiUrl = apiUrlInput.value.trim();
+    const webhookUrl = webhookUrlInput.value.trim();
+    const enableAI = enableAICheckbox.checked;
+    const exportFormat = exportFormatSelect.value;
 
     if (!query) {
       showError('Please enter a query');
@@ -49,7 +80,46 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    await searchAndPaste(apiUrl, query, k);
+    if (enableAI && !webhookUrl) {
+      showError('Please enter webhook URL when AI agent is enabled');
+      return;
+    }
+
+    // Save search if checkbox is checked
+    if (saveSearchCheckbox.checked) {
+      await saveSearch(query, k, apiUrl, webhookUrl, enableAI);
+    }
+
+    await searchAndExport(apiUrl, query, k, exportFormat, webhookUrl, enableAI);
+  });
+
+  // Saved searches modal
+  savedSearchesBtn.addEventListener('click', () => {
+    showSavedSearchesModal();
+  });
+
+  closeModal.addEventListener('click', () => {
+    savedSearchesModal.style.display = 'none';
+  });
+
+  clearAllSearches.addEventListener('click', async () => {
+    if (confirm('Are you sure you want to clear all saved searches?')) {
+      await chrome.storage.sync.remove(['savedSearches']);
+      showSavedSearchesModal();
+    }
+  });
+
+  // Document library modal
+  documentLibraryBtn.addEventListener('click', () => {
+    showDocumentLibraryModal();
+  });
+
+  closeLibraryModal.addEventListener('click', () => {
+    documentLibraryModal.style.display = 'none';
+  });
+
+  refreshLibrary.addEventListener('click', () => {
+    loadDocumentLibrary();
   });
 
   function updateUI(mode) {
@@ -58,7 +128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     status.textContent = `Study mode: ${mode ? 'ON' : 'OFF'}`;
   }
 
-  async function searchAndPaste(apiUrl, query, k) {
+  async function searchAndExport(apiUrl, query, k, exportFormat, webhookUrl, enableAI) {
     showLoading(true);
     hideMessages();
 
@@ -88,82 +158,157 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log('Image paths type:', typeof data.image_paths);
       console.log('Image paths keys:', data.image_paths ? Object.keys(data.image_paths) : 'undefined');
 
-      // Format the content for pasting
-      const formattedContent = formatSearchResults(data, query);
-      
-      // Get current tab
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      // Handle images and text separately
-      let imageCopySuccess = false;
-      try {
-        // First, copy images to clipboard if any exist
-        if (data.images && Object.keys(data.images).length > 0) {
-          console.log('Copying images to clipboard...');
-          await copyImagesToClipboard(data.images);
-          console.log('✓ Images copied to clipboard');
-          imageCopySuccess = true;
-        }
-      } catch (imageErr) {
-        console.log('Failed to copy images to clipboard:', imageErr);
-        imageCopySuccess = false;
-      }
-      
-      try {
-        // Remove base64 data from the response for text content
-        const textOnlyResponse = removeBase64Data(data);
+      // Get AI agent response if enabled
+      let aiResponse = null;
+      if (enableAI && webhookUrl) {
+        console.log('=== AI AGENT REQUEST ===');
+        console.log('Webhook URL:', webhookUrl);
+        console.log('Query:', query);
         
-        // Create text-only formatted content (without image tags)
-        const textOnlyContent = formatTextOnlyContent(data, query);
+        // Show specific loading message for webhook
+        showLoading(true);
+        hideMessages();
+        loading.innerHTML = '🔄 Waiting for webhook response...';
         
-        // Send the text-only content to content script for direct injection
-        await chrome.tabs.sendMessage(tab.id, {
-          action: 'pasteContent',
-          content: textOnlyContent,
-          fullResponse: textOnlyResponse, // Send text-only response
-          webhookResponse: data.webhook // Include webhook response
-        });
-        console.log('Text-only content sent to content script for direct injection');
-      } catch (err) {
-        console.log('Failed to inject content directly:', err);
-        // Fallback to clipboard
         try {
-          const textOnlyContent = formatTextOnlyContent(data, query);
-          await navigator.clipboard.writeText(textOnlyContent);
-          console.log('Fallback: Text copied to clipboard');
-        } catch (textErr) {
-          console.log('Failed to copy text to clipboard:', textErr);
+          aiResponse = await getAIResponse(webhookUrl, query, data);
+          console.log('AI Response received:', aiResponse);
+          loading.innerHTML = '✓ Webhook response received!';
+        } catch (aiErr) {
+          console.error('AI Agent request failed:', aiErr);
+          showError(`Webhook request failed: ${aiErr.message}`);
+          // Continue with RAG results even if AI fails
         }
       }
 
-      // Debug: log what we're sending to content script
-      console.log('=== SENDING TO CONTENT SCRIPT ===');
-      console.log('Formatted content length:', formattedContent.length);
-      console.log('Formatted content preview:', formattedContent.substring(0, 200) + '...');
-      console.log('Formatted content contains <img>:', formattedContent.includes('<img'));
-      console.log('Number of <img> tags:', (formattedContent.match(/<img/g) || []).length);
-      console.log('Full formatted content:', formattedContent);
-      console.log('Images data:', data.images || {});
-      console.log('Image paths data:', data.image_paths || {});
-
-      // Don't inject content script - just copy images to clipboard
-      // User can manually paste with Ctrl+V
-      
-      const imageCount = data.images ? Object.keys(data.images).length : 0;
-      if (imageCount > 0) {
-        if (imageCopySuccess) {
-          showSuccess(`Retrieved ${data.hits?.length || 0} results. Text pasted to chat. ${imageCount} images copied to clipboard - use Ctrl+V to paste them.`);
-        } else {
-          showSuccess(`Retrieved ${data.hits?.length || 0} results. Text pasted to chat. Failed to copy images to clipboard.`);
-        }
-      } else {
-        showSuccess(`Retrieved ${data.hits?.length || 0} results. Content pasted to chat.`);
+      // Handle different export formats
+      switch (exportFormat) {
+        case 'paste':
+          await handlePasteExport(data, query, aiResponse);
+          break;
+        case 'pdf':
+          await handlePDFExport(data, query, aiResponse);
+          break;
+        case 'markdown':
+          await handleMarkdownExport(data, query, aiResponse);
+          break;
+        case 'json':
+          await handleJSONExport(data, query, aiResponse);
+          break;
+        default:
+          await handlePasteExport(data, query, aiResponse);
       }
       
     } catch (err) {
       showError(`Error: ${err.message}`);
     } finally {
       showLoading(false);
+    }
+  }
+
+  async function getAIResponse(webhookUrl, query, ragData) {
+    console.log('Sending request to AI agent webhook...');
+    
+    // Prepare the payload for the AI agent
+    const payload = {
+      event: 'chat_message',
+      message: query,
+      timestamp: new Date().toISOString(),
+      session_id: 'extension_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+      rag_context: {
+        query: query,
+        hits: ragData.hits || [],
+        total_results: ragData.hits?.length || 0
+      }
+    };
+    
+    console.log('AI Agent payload:', payload);
+    
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`AI Agent HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const aiData = await response.json();
+    console.log('AI Agent initial response:', aiData);
+    
+    // Handle different response formats from n8n
+    if (aiData.message === "Workflow was started" || aiData.status === "processing") {
+      console.log('Workflow started, polling for AI response...');
+      
+      // Poll for the actual response with exponential backoff
+      return await pollForWebhookResponse(webhookUrl, payload.session_id, 0);
+    } else {
+      // Return the actual AI response immediately
+      console.log('AI response received immediately:', aiData);
+      return aiData;
+    }
+  }
+
+  async function pollForWebhookResponse(webhookUrl, sessionId, attempt = 0) {
+    const maxAttempts = 20; // Maximum 20 attempts
+    const baseDelay = 2000; // Start with 2 seconds
+    const maxDelay = 10000; // Maximum 10 seconds between attempts
+    
+    if (attempt >= maxAttempts) {
+      throw new Error('Timeout waiting for webhook response after ' + maxAttempts + ' attempts');
+    }
+    
+    // Calculate delay with exponential backoff
+    const delay = Math.min(baseDelay * Math.pow(1.5, attempt), maxDelay);
+    
+    console.log(`Polling attempt ${attempt + 1}/${maxAttempts}, waiting ${delay}ms...`);
+    
+    // Wait before polling
+    await new Promise(resolve => setTimeout(resolve, delay));
+    
+    try {
+      // Try to get the response (this might be a different endpoint or same endpoint with session ID)
+      const pollResponse = await fetch(`${webhookUrl}?session_id=${sessionId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (pollResponse.ok) {
+        const responseData = await pollResponse.json();
+        console.log(`Poll attempt ${attempt + 1} response:`, responseData);
+        
+        // Check if we have a complete response
+        if (responseData.status === 'completed' || responseData.message || responseData.content || responseData.response) {
+          console.log('✓ Webhook response received:', responseData);
+          return responseData;
+        } else if (responseData.status === 'processing' || responseData.status === 'pending') {
+          // Still processing, continue polling
+          return await pollForWebhookResponse(webhookUrl, sessionId, attempt + 1);
+        }
+      }
+      
+      // If we get here, the response wasn't ready or was an error
+      // Continue polling unless we've reached max attempts
+      if (attempt < maxAttempts - 1) {
+        return await pollForWebhookResponse(webhookUrl, sessionId, attempt + 1);
+      } else {
+        throw new Error('Webhook response not ready after maximum attempts');
+      }
+      
+    } catch (error) {
+      console.log(`Poll attempt ${attempt + 1} failed:`, error.message);
+      
+      // If it's a network error and we haven't reached max attempts, continue polling
+      if (attempt < maxAttempts - 1) {
+        return await pollForWebhookResponse(webhookUrl, sessionId, attempt + 1);
+      } else {
+        throw error;
+      }
     }
   }
 
@@ -206,16 +351,48 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('Text length:', text.length);
     console.log('Number of images:', Object.keys(images).length);
     
+    // Check if clipboard API is available
+    if (!navigator.clipboard || !navigator.clipboard.write) {
+      throw new Error('Clipboard API not available');
+    }
+    
     // Convert base64 images to Blob objects
     const imageBlobs = [];
     
     for (const [imageId, base64Data] of Object.entries(images)) {
       try {
         console.log(`Converting ${imageId}...`);
-        const response = await fetch(`data:image/png;base64,${base64Data}`);
-        const blob = await response.blob();
+        console.log(`Base64 data length: ${base64Data.length}`);
+        
+        // Clean base64 data - remove data URL prefix if present
+        let cleanBase64 = base64Data;
+        if (base64Data.startsWith('data:image/png;base64,')) {
+          cleanBase64 = base64Data.split(',')[1];
+        } else if (base64Data.startsWith('data:image/')) {
+          cleanBase64 = base64Data.split(',')[1];
+        }
+        
+        // Convert base64 to blob using a more reliable method
+        let blob;
+        try {
+          // Method 1: Try using fetch (most common)
+          const response = await fetch(`data:image/png;base64,${cleanBase64}`);
+          blob = await response.blob();
+        } catch (fetchErr) {
+          console.log(`Fetch method failed for ${imageId}, trying alternative method:`, fetchErr);
+          
+          // Method 2: Alternative base64 to blob conversion
+          const byteCharacters = atob(cleanBase64);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          blob = new Blob([byteArray], { type: 'image/png' });
+        }
+        
         imageBlobs.push(blob);
-        console.log(`✓ Converted ${imageId} to blob:`, blob.size, 'bytes');
+        console.log(`✓ Converted ${imageId} to blob:`, blob.size, 'bytes, type:', blob.type);
       } catch (err) {
         console.log(`✗ Failed to convert ${imageId}:`, err);
       }
@@ -223,26 +400,69 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     if (imageBlobs.length > 0) {
       try {
-        // Create clipboard items with both text and images
-        const clipboardItems = [];
+        console.log(`Attempting to copy text and ${imageBlobs.length} images to clipboard...`);
         
-        // Add text as first item
-        clipboardItems.push(new ClipboardItem({
-          'text/plain': new Blob([text], { type: 'text/plain' })
-        }));
-        
-        // Add all images
-        imageBlobs.forEach(blob => {
-          clipboardItems.push(new ClipboardItem({
-            'image/png': blob
-          }));
+        // Create a single clipboard item with both text and images
+        // Note: Some browsers support multiple formats in a single ClipboardItem
+        const clipboardItem = new ClipboardItem({
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+          'image/png': imageBlobs[0] // Use the first image as the primary image
         });
         
-        await navigator.clipboard.write(clipboardItems);
-        console.log(`✓ Successfully copied text and ${imageBlobs.length} images to clipboard as single context`);
+        await navigator.clipboard.write([clipboardItem]);
+        console.log(`✓ Successfully copied text and primary image to clipboard`);
+        
+        // If there are multiple images, copy them as separate items
+        if (imageBlobs.length > 1) {
+          console.log(`Copying ${imageBlobs.length - 1} additional images...`);
+          for (let i = 1; i < imageBlobs.length; i++) {
+            try {
+              const additionalItem = new ClipboardItem({
+                'image/png': imageBlobs[i]
+              });
+              await navigator.clipboard.write([additionalItem]);
+              console.log(`✓ Copied additional image ${i + 1} of ${imageBlobs.length}`);
+              
+              // Small delay between copies
+              if (i < imageBlobs.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+              }
+            } catch (err) {
+              console.log(`✗ Failed to copy additional image ${i + 1}:`, err);
+            }
+          }
+        }
+        
       } catch (err) {
-        console.log('✗ Failed to copy text and images to clipboard:', err);
-        throw err;
+        console.log('✗ Failed to copy combined text and images:', err);
+        console.log('Error details:', err.message);
+        
+        // Fallback: try copying text and images separately
+        console.log('Trying fallback: copying text and images separately...');
+        try {
+          await navigator.clipboard.writeText(text);
+          console.log('✓ Text copied to clipboard');
+          
+          // Copy images one by one
+          for (let i = 0; i < imageBlobs.length; i++) {
+            try {
+              const imageItem = new ClipboardItem({
+                'image/png': imageBlobs[i]
+              });
+              await navigator.clipboard.write([imageItem]);
+              console.log(`✓ Copied image ${i + 1} of ${imageBlobs.length}`);
+              
+              if (i < imageBlobs.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+              }
+            } catch (imageErr) {
+              console.log(`✗ Failed to copy image ${i + 1}:`, imageErr);
+            }
+          }
+        } catch (fallbackErr) {
+          console.log('✗ Fallback also failed:', fallbackErr);
+          throw fallbackErr;
+        }
       }
     } else {
       console.log('No images to copy, copying text only');
@@ -352,13 +572,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  function formatSearchResults(data, query) {
+  function formatSearchResults(data, query, aiResponse = null) {
     console.log('=== FORMAT SEARCH RESULTS DEBUG ===');
     console.log('Data received:', data);
     console.log('Data keys:', Object.keys(data));
     console.log('Data.image_paths:', data.image_paths);
     console.log('Data.image_paths type:', typeof data.image_paths);
     console.log('Data.image_paths keys:', data.image_paths ? Object.keys(data.image_paths) : 'undefined');
+    console.log('AI Response:', aiResponse);
     
     const hits = data.hits || [];
     const images = data.images || {};
@@ -374,6 +595,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('API URL:', apiUrl);
     
     let content = `**Study Context for: "${query}"**\n\n`;
+    
+    // Add AI Agent response if available
+    if (aiResponse) {
+      content += `## 🤖 AI Agent Response\n\n`;
+      if (aiResponse.message) {
+        content += `${aiResponse.message}\n\n`;
+      } else if (aiResponse.content) {
+        content += `${aiResponse.content}\n\n`;
+      } else if (aiResponse.response) {
+        content += `${aiResponse.response}\n\n`;
+      } else {
+        content += `${JSON.stringify(aiResponse, null, 2)}\n\n`;
+      }
+      content += `---\n\n`;
+    }
+    
+    // Add RAG results
+    content += `## 📚 Document Search Results\n\n`;
     
     if (hits.length === 0) {
       content += "No relevant content found in your documents.\n";
@@ -566,6 +805,277 @@ document.addEventListener('DOMContentLoaded', async () => {
     success.style.display = 'none';
   }
 
+  // PDF Generation Functions
+  async function generatePDFWithContent(data, query) {
+    console.log('=== GENERATING PDF ===');
+    console.log('Data received:', data);
+    console.log('Query:', query);
+    
+    // Initialize jsPDF
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    
+    // Set up PDF styling
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 20;
+    const contentWidth = pageWidth - (2 * margin);
+    let currentY = margin;
+    
+    // Add title
+    doc.setFontSize(16);
+    doc.setFont(undefined, 'bold');
+    doc.text(`Study Context for: "${query}"`, margin, currentY);
+    currentY += 15;
+    
+    // Add separator line
+    doc.setLineWidth(0.5);
+    doc.line(margin, currentY, pageWidth - margin, currentY);
+    currentY += 10;
+    
+    const hits = data.hits || [];
+    const images = data.images || {};
+    const imagePaths = data.image_paths || {};
+    
+    console.log('Processing hits:', hits.length);
+    console.log('Processing images:', Object.keys(images).length);
+    
+    // Separate text and image hits
+    const textHits = hits.filter(hit => hit.metadata?.type === 'text' || !hit.metadata?.type);
+    const imageHits = hits.filter(hit => hit.metadata?.type === 'image');
+    
+    // Add text results
+    if (textHits.length > 0) {
+      doc.setFontSize(12);
+      doc.setFont(undefined, 'bold');
+      doc.text(`Found ${hits.length} relevant results:`, margin, currentY);
+      currentY += 10;
+      
+      textHits.forEach((hit, index) => {
+        // Check if we need a new page
+        if (currentY > pageHeight - 40) {
+          doc.addPage();
+          currentY = margin;
+        }
+        
+        const metadata = hit.metadata || {};
+        const page = metadata.page !== undefined ? ` (Page ${metadata.page})` : '';
+        
+        // Add hit title
+        doc.setFontSize(11);
+        doc.setFont(undefined, 'bold');
+        doc.text(`${index + 1}. Text${page}`, margin, currentY);
+        currentY += 8;
+        
+        // Add hit content
+        doc.setFontSize(10);
+        doc.setFont(undefined, 'normal');
+        const content = hit.content || '';
+        const lines = doc.splitTextToSize(content, contentWidth);
+        
+        lines.forEach(line => {
+          if (currentY > pageHeight - 20) {
+            doc.addPage();
+            currentY = margin;
+          }
+          doc.text(line, margin, currentY);
+          currentY += 5;
+        });
+        
+        currentY += 5; // Space between hits
+      });
+    }
+    
+    // Add image results
+    if (imageHits.length > 0) {
+      if (currentY > pageHeight - 40) {
+        doc.addPage();
+        currentY = margin;
+      }
+      
+      doc.setFontSize(12);
+      doc.setFont(undefined, 'bold');
+      doc.text('Images Found:', margin, currentY);
+      currentY += 10;
+      
+      for (let i = 0; i < imageHits.length; i++) {
+        const hit = imageHits[i];
+        const metadata = hit.metadata || {};
+        const page = metadata.page !== undefined ? ` (Page ${metadata.page})` : '';
+        const imageId = metadata.image_id;
+        
+        // Check if we need a new page
+        if (currentY > pageHeight - 60) {
+          doc.addPage();
+          currentY = margin;
+        }
+        
+        // Add image title
+        doc.setFontSize(11);
+        doc.setFont(undefined, 'bold');
+        doc.text(`Image ${i + 1}${page}`, margin, currentY);
+        currentY += 8;
+        
+        // Add image if available
+        if (imageId && images[imageId]) {
+          try {
+            console.log(`Adding image ${imageId} to PDF...`);
+            
+            // Convert base64 to blob
+            let cleanBase64 = images[imageId];
+            if (cleanBase64.startsWith('data:image/png;base64,')) {
+              cleanBase64 = cleanBase64.split(',')[1];
+            } else if (cleanBase64.startsWith('data:image/')) {
+              cleanBase64 = cleanBase64.split(',')[1];
+            }
+            
+            // Add image to PDF
+            const imgData = `data:image/png;base64,${cleanBase64}`;
+            const imgWidth = Math.min(contentWidth, 150); // Max width 150
+            const imgHeight = (imgWidth * 0.75); // Maintain aspect ratio
+            
+            // Check if image fits on current page
+            if (currentY + imgHeight > pageHeight - 20) {
+              doc.addPage();
+              currentY = margin;
+            }
+            
+            doc.addImage(imgData, 'PNG', margin, currentY, imgWidth, imgHeight);
+            currentY += imgHeight + 5;
+            
+            console.log(`✓ Image ${imageId} added to PDF`);
+          } catch (imgErr) {
+            console.log(`✗ Failed to add image ${imageId}:`, imgErr);
+            doc.setFontSize(10);
+            doc.setFont(undefined, 'normal');
+            doc.text(`[Image ${imageId} could not be added]`, margin, currentY);
+            currentY += 10;
+          }
+        } else {
+          doc.setFontSize(10);
+          doc.setFont(undefined, 'normal');
+          doc.text(`[Image data not available - ${imageId}]`, margin, currentY);
+          currentY += 10;
+        }
+      }
+    }
+    
+    // Add standalone images
+    const standaloneImages = Object.keys(imagePaths).filter(imageId => 
+      !imageHits.some(hit => hit.metadata?.image_id === imageId)
+    );
+    
+    if (standaloneImages.length > 0) {
+      if (currentY > pageHeight - 40) {
+        doc.addPage();
+        currentY = margin;
+      }
+      
+      doc.setFontSize(12);
+      doc.setFont(undefined, 'bold');
+      doc.text('Additional Images:', margin, currentY);
+      currentY += 10;
+      
+      standaloneImages.forEach((imageId, index) => {
+        // Check if we need a new page
+        if (currentY > pageHeight - 60) {
+          doc.addPage();
+          currentY = margin;
+        }
+        
+        // Add image title
+        doc.setFontSize(11);
+        doc.setFont(undefined, 'bold');
+        doc.text(`Additional Image ${index + 1}`, margin, currentY);
+        currentY += 8;
+        
+        // Add image if available
+        if (images[imageId]) {
+          try {
+            console.log(`Adding standalone image ${imageId} to PDF...`);
+            
+            // Convert base64 to blob
+            let cleanBase64 = images[imageId];
+            if (cleanBase64.startsWith('data:image/png;base64,')) {
+              cleanBase64 = cleanBase64.split(',')[1];
+            } else if (cleanBase64.startsWith('data:image/')) {
+              cleanBase64 = cleanBase64.split(',')[1];
+            }
+            
+            // Add image to PDF
+            const imgData = `data:image/png;base64,${cleanBase64}`;
+            const imgWidth = Math.min(contentWidth, 150); // Max width 150
+            const imgHeight = (imgWidth * 0.75); // Maintain aspect ratio
+            
+            // Check if image fits on current page
+            if (currentY + imgHeight > pageHeight - 20) {
+              doc.addPage();
+              currentY = margin;
+            }
+            
+            doc.addImage(imgData, 'PNG', margin, currentY, imgWidth, imgHeight);
+            currentY += imgHeight + 5;
+            
+            console.log(`✓ Standalone image ${imageId} added to PDF`);
+          } catch (imgErr) {
+            console.log(`✗ Failed to add standalone image ${imageId}:`, imgErr);
+            doc.setFontSize(10);
+            doc.setFont(undefined, 'normal');
+            doc.text(`[Image ${imageId} could not be added]`, margin, currentY);
+            currentY += 10;
+          }
+        } else {
+          doc.setFontSize(10);
+          doc.setFont(undefined, 'normal');
+          doc.text(`[Image data not available - ${imageId}]`, margin, currentY);
+          currentY += 10;
+        }
+      });
+    }
+    
+    // Add footer
+    if (currentY > pageHeight - 20) {
+      doc.addPage();
+      currentY = margin;
+    }
+    
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'italic');
+    doc.text('Retrieved from your documents using Recall Me', margin, currentY);
+    
+    console.log('✓ PDF generation complete');
+    
+    // Convert to blob
+    const pdfBlob = doc.output('blob');
+    console.log('✓ PDF converted to blob:', pdfBlob.size, 'bytes');
+    
+    return pdfBlob;
+  }
+  
+  async function copyPDFToClipboard(pdfBlob) {
+    console.log('Copying PDF to clipboard...');
+    console.log('PDF blob size:', pdfBlob.size, 'bytes');
+    
+    // Check if clipboard API is available
+    if (!navigator.clipboard || !navigator.clipboard.write) {
+      throw new Error('Clipboard API not available');
+    }
+    
+    try {
+      // Create clipboard item with PDF
+      const clipboardItem = new ClipboardItem({
+        'application/pdf': pdfBlob
+      });
+      
+      await navigator.clipboard.write([clipboardItem]);
+      console.log('✓ PDF successfully copied to clipboard');
+    } catch (err) {
+      console.log('✗ Failed to copy PDF to clipboard:', err);
+      console.log('Error details:', err.message);
+      throw err;
+    }
+  }
+
   // Test function for debugging clipboard issues
   window.testClipboard = async function() {
     try {
@@ -622,7 +1132,672 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log('❌ Clipboard test failed:', err);
     }
   };
+
+  // Export Format Handlers
+  async function handlePasteExport(data, query, aiResponse = null) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    
+    console.log('=== HANDLE PASTE EXPORT ===');
+    console.log('AI Response (webhook response):', aiResponse);
+    console.log('Data:', data);
+    
+    // If we have a webhook response (aiResponse), use ONLY that
+    if (aiResponse && Object.keys(aiResponse).length > 0) {
+      console.log('Using webhook response only for pasting...');
+      
+      // Copy webhook response to clipboard first
+      try {
+        const webhookText = JSON.stringify(aiResponse, null, 2);
+        await navigator.clipboard.writeText(webhookText);
+        console.log('✓ Webhook response copied to clipboard');
+      } catch (clipboardError) {
+        console.error('Failed to copy webhook response to clipboard:', clipboardError);
+      }
+      
+      // Try to ensure content script is ready, then send webhook response
+      try {
+        // First, try to ping the content script to see if it's ready
+        await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
+        
+        // If ping succeeds, send the webhook response
+        await chrome.tabs.sendMessage(tab.id, {
+          action: 'pasteContent',
+          content: '', // Empty content since we only want webhook response
+          fullResponse: {}, // Empty full response
+          webhookResponse: aiResponse, // This is the webhook response
+          aiResponse: null // Don't pass aiResponse again
+        });
+        
+        console.log('✓ Webhook response sent to content script for pasting');
+        showSuccess('Webhook response copied to clipboard and pasted to chat successfully!');
+        
+      } catch (error) {
+        console.error('Content script not ready or failed to send webhook response:', error);
+        
+        // Fallback: try to inject the content directly
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            function: pasteWebhookResponseDirectly,
+            args: [aiResponse]
+          });
+          
+          console.log('✓ Webhook response injected directly via scripting');
+          showSuccess('Webhook response copied to clipboard and pasted to chat successfully!');
+          
+        } catch (injectError) {
+          console.error('Failed to inject webhook response directly:', injectError);
+          showError('Failed to paste webhook response. Please try again or check if you\'re on a supported page (ChatGPT/Perplexity).');
+        }
+      }
+      
+    } else {
+      // Fallback: if no webhook response, use the original RAG results
+      console.log('No webhook response, using RAG results...');
+      
+        const textOnlyResponse = removeBase64Data(data);
+      const textOnlyContent = formatTextOnlyContent(data, query, null);
+        
+      // Try to ensure content script is ready, then send RAG content
+      try {
+        // First, try to ping the content script to see if it's ready
+        await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
+        
+        // If ping succeeds, send the RAG content
+        await chrome.tabs.sendMessage(tab.id, {
+          action: 'pasteContent',
+          content: textOnlyContent,
+          fullResponse: textOnlyResponse,
+          webhookResponse: {}, // Empty webhook response
+          aiResponse: null
+        });
+        
+        console.log('✓ RAG content sent to content script for pasting');
+        showSuccess(`Retrieved ${data.hits?.length || 0} results. Content pasted to chat.`);
+        
+      } catch (error) {
+        console.error('Content script not ready or failed to send RAG content:', error);
+        
+        // Fallback: try to inject the content directly
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            function: pasteRAGContentDirectly,
+            args: [textOnlyContent]
+          });
+          
+          console.log('✓ RAG content injected directly via scripting');
+          showSuccess(`Retrieved ${data.hits?.length || 0} results. Content pasted to chat.`);
+          
+        } catch (injectError) {
+          console.error('Failed to inject RAG content directly:', injectError);
+          showError('Failed to paste content. Please try again or check if you\'re on a supported page (ChatGPT/Perplexity).');
+        }
+      }
+    }
+  }
+
+  async function handlePDFExport(data, query, aiResponse = null) {
+    try {
+      console.log('Generating PDF export...');
+      const pdfBlob = await generatePDFWithContent(data, query, aiResponse);
+      console.log('✓ PDF generated successfully');
+      
+      // Download the PDF
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `recall-me-search-${query.replace(/[^a-zA-Z0-9]/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      const aiStatus = aiResponse ? ' + AI Response' : '';
+      showSuccess(`PDF exported successfully with ${data.hits?.length || 0} results${aiStatus}!`);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      showError(`PDF export failed: ${err.message}`);
+    }
+  }
+
+  async function handleMarkdownExport(data, query, aiResponse = null) {
+    try {
+      const markdownContent = formatMarkdownExport(data, query, aiResponse);
+      
+      // Copy to clipboard
+      await navigator.clipboard.writeText(markdownContent);
+      
+      // Also download as file
+      const blob = new Blob([markdownContent], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `recall-me-search-${query.replace(/[^a-zA-Z0-9]/g, '-')}-${new Date().toISOString().split('T')[0]}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      const aiStatus = aiResponse ? ' + AI Response' : '';
+      showSuccess(`Markdown exported successfully with ${data.hits?.length || 0} results${aiStatus}! Copied to clipboard and downloaded.`);
+    } catch (err) {
+      console.error('Markdown export failed:', err);
+      showError(`Markdown export failed: ${err.message}`);
+    }
+  }
+
+  async function handleJSONExport(data, query, aiResponse = null) {
+    try {
+      const jsonContent = JSON.stringify({
+        query: query,
+        timestamp: new Date().toISOString(),
+        results: data.hits || [],
+        images: data.image_paths || {},
+        aiResponse: aiResponse,
+        metadata: {
+          totalResults: data.hits?.length || 0,
+          imageCount: Object.keys(data.images || {}).length,
+          hasAIResponse: !!aiResponse
+        }
+      }, null, 2);
+      
+      // Copy to clipboard
+      await navigator.clipboard.writeText(jsonContent);
+      
+      // Also download as file
+      const blob = new Blob([jsonContent], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `recall-me-search-${query.replace(/[^a-zA-Z0-9]/g, '-')}-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      const aiStatus = aiResponse ? ' + AI Response' : '';
+      showSuccess(`JSON exported successfully with ${data.hits?.length || 0} results${aiStatus}! Copied to clipboard and downloaded.`);
+    } catch (err) {
+      console.error('JSON export failed:', err);
+      showError(`JSON export failed: ${err.message}`);
+    }
+  }
+
+  function formatMarkdownExport(data, query) {
+    const hits = data.hits || [];
+    const imagePaths = data.image_paths || {};
+    const apiUrl = apiUrlInput.value.trim();
+    
+    let markdown = `# Study Context: "${query}"\n\n`;
+    markdown += `**Generated:** ${new Date().toLocaleString()}\n`;
+    markdown += `**Results:** ${hits.length} found\n\n`;
+    markdown += `---\n\n`;
+    
+    if (hits.length === 0) {
+      markdown += "No relevant content found in your documents.\n";
+      return markdown;
+    }
+
+    // Separate text and image hits
+    const textHits = hits.filter(hit => hit.metadata?.type === 'text' || !hit.metadata?.type);
+    const imageHits = hits.filter(hit => hit.metadata?.type === 'image');
+
+    // Add text results
+    textHits.forEach((hit, index) => {
+      const metadata = hit.metadata || {};
+      const page = metadata.page !== undefined ? ` (Page ${metadata.page})` : '';
+      markdown += `## ${index + 1}. Text${page}\n\n`;
+      markdown += `${hit.content}\n\n`;
+    });
+
+    // Add image results
+    if (imageHits.length > 0) {
+      markdown += `## Images Found\n\n`;
+      imageHits.forEach((hit, index) => {
+        const metadata = hit.metadata || {};
+        const page = metadata.page !== undefined ? ` (Page ${metadata.page})` : '';
+        const imageId = metadata.image_id;
+        
+        markdown += `### Image ${index + 1}${page}\n\n`;
+        if (imageId && imagePaths[imageId]) {
+          const imageUrl = `${apiUrl}${imagePaths[imageId]}`;
+          markdown += `![Image from page ${metadata.page}](${imageUrl})\n\n`;
+          markdown += `*Image from page ${metadata.page}*\n\n`;
+        } else {
+          markdown += `[Image data not available - ${imageId}]\n\n`;
+        }
+      });
+    }
+
+    // Add standalone images
+    const standaloneImages = Object.keys(imagePaths).filter(imageId => 
+      !imageHits.some(hit => hit.metadata?.image_id === imageId)
+    );
+
+    if (standaloneImages.length > 0) {
+      markdown += `## Additional Images\n\n`;
+      standaloneImages.forEach((imageId, index) => {
+        markdown += `### Additional Image ${index + 1}\n\n`;
+        if (imagePaths[imageId]) {
+          const imageUrl = `${apiUrl}${imagePaths[imageId]}`;
+          markdown += `![Additional Image](${imageUrl})\n\n`;
+        } else {
+          markdown += `[Image path not available - ${imageId}]\n\n`;
+        }
+        markdown += `*Image ID: ${imageId}*\n\n`;
+      });
+    }
+
+    markdown += `---\n\n`;
+    markdown += `*Retrieved from your documents using Recall Me*\n`;
+    
+    return markdown;
+  }
+
+  // Saved Searches Functions
+  async function saveSearch(query, k, apiUrl, webhookUrl, enableAI) {
+    try {
+      const result = await chrome.storage.sync.get(['savedSearches']);
+      const savedSearches = result.savedSearches || [];
+      
+      const searchEntry = {
+        id: Date.now().toString(),
+        query: query,
+        k: k,
+        apiUrl: apiUrl,
+        webhookUrl: webhookUrl,
+        enableAI: enableAI,
+        timestamp: new Date().toISOString(),
+        lastUsed: new Date().toISOString()
+      };
+      
+      // Check if this exact search already exists
+      const existingIndex = savedSearches.findIndex(search => 
+        search.query === query && search.k === k && search.apiUrl === apiUrl
+      );
+      
+      if (existingIndex >= 0) {
+        // Update last used time and settings
+        savedSearches[existingIndex].lastUsed = new Date().toISOString();
+        savedSearches[existingIndex].webhookUrl = webhookUrl;
+        savedSearches[existingIndex].enableAI = enableAI;
+      } else {
+        // Add new search
+        savedSearches.unshift(searchEntry);
+        
+        // Limit to 20 saved searches
+        if (savedSearches.length > 20) {
+          savedSearches.splice(20);
+        }
+      }
+      
+      await chrome.storage.sync.set({ savedSearches: savedSearches });
+      console.log('Search saved successfully');
+    } catch (err) {
+      console.error('Failed to save search:', err);
+    }
+  }
+
+  async function showSavedSearchesModal() {
+    try {
+      const result = await chrome.storage.sync.get(['savedSearches']);
+      const savedSearches = result.savedSearches || [];
+      
+      savedSearchesList.innerHTML = '';
+      
+      if (savedSearches.length === 0) {
+        savedSearchesList.innerHTML = '<p style="color: #9aa3b2; text-align: center; margin: 20px 0;">No saved searches yet</p>';
+      } else {
+        savedSearches.forEach(search => {
+          const searchItem = document.createElement('div');
+          searchItem.style.cssText = `
+            background: #12141a;
+            border: 1px solid #1e2230;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+          `;
+          
+          searchItem.innerHTML = `
+            <div style="font-weight: 600; color: #e6e8ee; margin-bottom: 4px;">${search.query}</div>
+            <div style="font-size: 12px; color: #9aa3b2;">
+              Results: ${search.k} | Last used: ${new Date(search.lastUsed).toLocaleDateString()}
+            </div>
+            <div style="margin-top: 8px; display: flex; gap: 8px;">
+              <button class="use-search-btn" style="background: #4f46e5; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer;">Use</button>
+              <button class="delete-search-btn" style="background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer;">Delete</button>
+            </div>
+          `;
+          
+          // Add click handlers
+          const useBtn = searchItem.querySelector('.use-search-btn');
+          const deleteBtn = searchItem.querySelector('.delete-search-btn');
+          
+          useBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            useSavedSearch(search);
+          });
+          
+          deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteSavedSearch(search.id);
+          });
+          
+          searchItem.addEventListener('click', () => {
+            useSavedSearch(search);
+          });
+          
+          searchItem.addEventListener('mouseenter', () => {
+            searchItem.style.background = '#1e2230';
+          });
+          
+          searchItem.addEventListener('mouseleave', () => {
+            searchItem.style.background = '#12141a';
+          });
+          
+          savedSearchesList.appendChild(searchItem);
+        });
+      }
+      
+      savedSearchesModal.style.display = 'block';
+    } catch (err) {
+      console.error('Failed to show saved searches:', err);
+    }
+  }
+
+  async function useSavedSearch(search) {
+    // Populate the form with saved search data
+    queryInput.value = search.query;
+    kInput.value = search.k;
+    apiUrlInput.value = search.apiUrl;
+    webhookUrlInput.value = search.webhookUrl || '';
+    enableAICheckbox.checked = search.enableAI || false;
+    
+    // Close modal
+    savedSearchesModal.style.display = 'none';
+    
+    // Update last used time
+    const result = await chrome.storage.sync.get(['savedSearches']);
+    const savedSearches = result.savedSearches || [];
+    const searchIndex = savedSearches.findIndex(s => s.id === search.id);
+    if (searchIndex >= 0) {
+      savedSearches[searchIndex].lastUsed = new Date().toISOString();
+      await chrome.storage.sync.set({ savedSearches: savedSearches });
+    }
+    
+    // Focus on query input
+    queryInput.focus();
+  }
+
+  async function deleteSavedSearch(searchId) {
+    if (confirm('Are you sure you want to delete this saved search?')) {
+      try {
+        const result = await chrome.storage.sync.get(['savedSearches']);
+        const savedSearches = result.savedSearches || [];
+        const filteredSearches = savedSearches.filter(search => search.id !== searchId);
+        await chrome.storage.sync.set({ savedSearches: filteredSearches });
+        showSavedSearchesModal(); // Refresh the modal
+      } catch (err) {
+        console.error('Failed to delete saved search:', err);
+      }
+    }
+  }
+
+  // Document Library Functions
+  async function showDocumentLibraryModal() {
+    documentLibraryModal.style.display = 'block';
+    await loadDocumentLibrary();
+  }
+
+  async function loadDocumentLibrary() {
+    try {
+      documentLibraryList.innerHTML = '<p style="color: #9aa3b2; text-align: center;">Loading documents...</p>';
+      
+      const apiUrl = apiUrlInput.value.trim();
+      const response = await fetch(`${apiUrl}/get_document_info`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        documentLibraryList.innerHTML = `<p style="color: #ef4444; text-align: center;">Error: ${data.error}</p>`;
+        return;
+      }
+      
+      if (data.documents.length === 0) {
+        documentLibraryList.innerHTML = '<p style="color: #9aa3b2; text-align: center;">No documents indexed yet. Upload a PDF to get started.</p>';
+        return;
+      }
+      
+      let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px;">';
+      
+      data.documents.forEach(doc => {
+        html += `
+          <div style="background: #12141a; border: 1px solid #1e2230; border-radius: 6px; padding: 8px; text-align: center;">
+            <div style="height: 80px; background: #1e2230; border-radius: 4px; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; color: #9aa3b2;">
+              📄
+            </div>
+            <div style="font-size: 12px; color: #e6e8ee; margin-bottom: 4px;">Page ${doc.page}</div>
+            <div style="font-size: 10px; color: #9aa3b2; margin-bottom: 8px;">${doc.image_count} images</div>
+            <button onclick="searchDocumentPage(${doc.page})" style="background: #4f46e5; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; width: 100%;">Search</button>
+          </div>
+        `;
+      });
+      
+      html += '</div>';
+      documentLibraryList.innerHTML = html;
+      
+    } catch (err) {
+      console.error('Failed to load document library:', err);
+      documentLibraryList.innerHTML = `<p style="color: #ef4444; text-align: center;">Error loading documents: ${err.message}</p>`;
+    }
+  }
+
+  // Global function for document page search
+  window.searchDocumentPage = async function(pageNumber) {
+    const query = prompt(`Enter search query for page ${pageNumber}:`);
+    if (query) {
+      const apiUrl = apiUrlInput.value.trim();
+      const k = parseInt(kInput.value) || 5;
+      
+      try {
+        showLoading(true);
+        hideMessages();
+        
+        const response = await fetch(`${apiUrl}/search_lc?query=${encodeURIComponent(query)}&k=${k}`);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        // Filter results to only show results from the specified page
+        const filteredData = {
+          ...data,
+          hits: data.hits.filter(hit => hit.metadata?.page === pageNumber)
+        };
+        
+        // Close modal and perform search
+        documentLibraryModal.style.display = 'none';
+        await searchAndExport(apiUrl, query, k, exportFormatSelect.value);
+        
+      } catch (err) {
+        showError(`Error searching page ${pageNumber}: ${err.message}`);
+      } finally {
+        showLoading(false);
+      }
+    }
+  };
 });
+
+// Fallback functions for direct content injection when content script is not available
+function pasteWebhookResponseDirectly(webhookResponse) {
+  console.log('=== DIRECT WEBHOOK RESPONSE INJECTION ===');
+  console.log('Webhook response:', webhookResponse);
+  
+  // Copy to clipboard first
+  try {
+    const webhookContent = JSON.stringify(webhookResponse, null, 2);
+    navigator.clipboard.writeText(webhookContent).then(() => {
+      console.log('✓ Webhook response copied to clipboard');
+    }).catch(err => {
+      console.error('Failed to copy webhook response to clipboard:', err);
+    });
+  } catch (error) {
+    console.error('Clipboard API not available:', error);
+  }
+  
+  // Find the textarea/input element
+  let textarea = document.querySelector('textarea[placeholder*="Message"]') || 
+                 document.querySelector('textarea[placeholder*="message"]') ||
+                 document.querySelector('textarea[data-id="root"]') ||
+                 document.querySelector('textarea[placeholder*="Send a message"]') ||
+                 document.querySelector('textarea[placeholder*="Type a message"]') ||
+                 document.querySelector('div[contenteditable="true"]') ||
+                 document.querySelector('textarea');
+
+  // Try to find Perplexity textarea
+  if (!textarea) {
+    textarea = document.querySelector('textarea[placeholder*="Ask anything"]') ||
+               document.querySelector('textarea[placeholder*="ask"]') ||
+               document.querySelector('textarea[placeholder*="Ask"]') ||
+               document.querySelector('div[contenteditable="true"][role="textbox"]') ||
+               document.querySelector('div[contenteditable="true"]') ||
+               document.querySelector('[data-testid="search-input"]') ||
+               document.querySelector('[data-testid="composer-input"]') ||
+               document.querySelector('div[contenteditable="true"][aria-label*="Ask"]') ||
+               document.querySelector('div[contenteditable="true"][aria-label*="ask"]') ||
+               document.querySelector('div[contenteditable="true"][aria-label*="message"]') ||
+               document.querySelector('div[contenteditable="true"][aria-label*="Message"]') ||
+               document.querySelector('div[contenteditable="true"][data-testid*="input"]') ||
+               document.querySelector('div[contenteditable="true"][data-testid*="composer"]');
+  }
+
+  console.log('Found textarea:', textarea);
+
+  if (textarea) {
+    console.log('Textarea type:', textarea.tagName, 'Contenteditable:', textarea.contentEditable);
+    
+    // Focus the element
+    textarea.focus();
+    
+    // Clear any existing content
+    if (textarea.tagName === 'TEXTAREA') {
+      textarea.value = '';
+    } else {
+      textarea.textContent = '';
+      textarea.innerHTML = '';
+    }
+    
+    // Set the webhook response as JSON
+    const webhookContent = JSON.stringify(webhookResponse, null, 2);
+    
+    if (textarea.contentEditable === 'true') {
+      textarea.textContent = webhookContent;
+    } else if (textarea.tagName === 'TEXTAREA') {
+      textarea.value = webhookContent;
+    }
+    
+    // Trigger events to ensure the app recognizes the change
+    const events = ['input', 'change', 'keyup', 'keydown', 'paste', 'compositionend'];
+    events.forEach(eventType => {
+      textarea.dispatchEvent(new Event(eventType, { bubbles: true, cancelable: true }));
+    });
+
+    // For Perplexity, also try triggering focus events
+    textarea.dispatchEvent(new Event('focus', { bubbles: true }));
+    textarea.dispatchEvent(new Event('blur', { bubbles: true }));
+    textarea.focus();
+
+    console.log('✓ Webhook response injected directly');
+    return true;
+  }
+  
+  console.log('No suitable textarea found for direct injection');
+  return false;
+}
+
+function pasteRAGContentDirectly(content) {
+  console.log('=== DIRECT RAG CONTENT INJECTION ===');
+  console.log('Content length:', content.length);
+  
+  // Find the textarea/input element
+  let textarea = document.querySelector('textarea[placeholder*="Message"]') || 
+                 document.querySelector('textarea[placeholder*="message"]') ||
+                 document.querySelector('textarea[data-id="root"]') ||
+                 document.querySelector('textarea[placeholder*="Send a message"]') ||
+                 document.querySelector('textarea[placeholder*="Type a message"]') ||
+                 document.querySelector('div[contenteditable="true"]') ||
+                 document.querySelector('textarea');
+
+  // Try to find Perplexity textarea
+  if (!textarea) {
+    textarea = document.querySelector('textarea[placeholder*="Ask anything"]') ||
+               document.querySelector('textarea[placeholder*="ask"]') ||
+               document.querySelector('textarea[placeholder*="Ask"]') ||
+               document.querySelector('div[contenteditable="true"][role="textbox"]') ||
+               document.querySelector('div[contenteditable="true"]') ||
+               document.querySelector('[data-testid="search-input"]') ||
+               document.querySelector('[data-testid="composer-input"]') ||
+               document.querySelector('div[contenteditable="true"][aria-label*="Ask"]') ||
+               document.querySelector('div[contenteditable="true"][aria-label*="ask"]') ||
+               document.querySelector('div[contenteditable="true"][aria-label*="message"]') ||
+               document.querySelector('div[contenteditable="true"][aria-label*="Message"]') ||
+               document.querySelector('div[contenteditable="true"][data-testid*="input"]') ||
+               document.querySelector('div[contenteditable="true"][data-testid*="composer"]');
+  }
+
+  console.log('Found textarea:', textarea);
+
+  if (textarea) {
+    console.log('Textarea type:', textarea.tagName, 'Contenteditable:', textarea.contentEditable);
+    
+    // Focus the element
+    textarea.focus();
+    
+    // Clear any existing content
+    if (textarea.tagName === 'TEXTAREA') {
+      textarea.value = '';
+    } else {
+      textarea.textContent = '';
+      textarea.innerHTML = '';
+    }
+    
+    if (textarea.contentEditable === 'true') {
+      textarea.textContent = content;
+    } else if (textarea.tagName === 'TEXTAREA') {
+      textarea.value = content;
+    }
+    
+    // Trigger events to ensure the app recognizes the change
+    const events = ['input', 'change', 'keyup', 'keydown', 'paste', 'compositionend'];
+    events.forEach(eventType => {
+      textarea.dispatchEvent(new Event(eventType, { bubbles: true, cancelable: true }));
+    });
+
+    // For Perplexity, also try triggering focus events
+    textarea.dispatchEvent(new Event('focus', { bubbles: true }));
+    textarea.dispatchEvent(new Event('blur', { bubbles: true }));
+    textarea.focus();
+
+    console.log('✓ RAG content injected directly');
+    return true;
+  }
+  
+  console.log('No suitable textarea found for direct injection');
+  return false;
+}
 
 // Function to be injected into the page
 function pasteToChat(content, images = {}) {

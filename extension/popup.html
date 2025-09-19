@@ -152,6 +152,11 @@
     </div>
     
     <div class="input-group">
+      <label for="webhookUrl">AI Agent Webhook URL:</label>
+      <input type="text" id="webhookUrl" placeholder="https://your-n8n-instance.com/webhook/your-webhook-id">
+    </div>
+    
+    <div class="input-group">
       <label for="query">Query:</label>
       <textarea id="query" placeholder="What does the document say about..."></textarea>
     </div>
@@ -161,13 +166,66 @@
       <input type="number" id="k" value="5" min="1" max="10">
     </div>
     
-    <button id="searchBtn">Search & Paste</button>
+    <div class="input-group">
+      <label>
+        <input type="checkbox" id="saveSearch"> Save this search
+      </label>
+    </div>
+    
+    <div class="input-group">
+      <label>
+        <input type="checkbox" id="enableAI"> Enable AI Agent Response
+      </label>
+    </div>
+    
+    <div class="input-group">
+      <label for="exportFormat">Export Format:</label>
+      <select id="exportFormat">
+        <option value="paste">Paste to Chat</option>
+        <option value="pdf">PDF Document</option>
+        <option value="markdown">Markdown Text</option>
+        <option value="json">JSON Data</option>
+      </select>
+    </div>
+    
+    <button id="searchBtn">Search & Export</button>
+    <button id="savedSearchesBtn" style="margin-top: 8px; background: #1e2230;">Saved Searches</button>
+    <button id="documentLibraryBtn" style="margin-top: 8px; background: #1e2230;">Document Library</button>
     
     <div class="loading" id="loading">Searching...</div>
     <div class="error" id="error"></div>
     <div class="success" id="success"></div>
   </div>
   
+  <!-- Saved Searches Modal -->
+  <div id="savedSearchesModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #0b0c10; border: 1px solid #1e2230; border-radius: 8px; padding: 20px; width: 90%; max-width: 400px; max-height: 80%; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h3 style="margin: 0; color: #e6e8ee;">Saved Searches</h3>
+        <button id="closeModal" style="background: none; border: none; color: #9aa3b2; font-size: 20px; cursor: pointer;">&times;</button>
+      </div>
+      <div id="savedSearchesList"></div>
+      <div style="margin-top: 16px; text-align: center;">
+        <button id="clearAllSearches" style="background: #ef4444; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Clear All</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Document Library Modal -->
+  <div id="documentLibraryModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #0b0c10; border: 1px solid #1e2230; border-radius: 8px; padding: 20px; width: 90%; max-width: 500px; max-height: 80%; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h3 style="margin: 0; color: #e6e8ee;">Document Library</h3>
+        <button id="closeLibraryModal" style="background: none; border: none; color: #9aa3b2; font-size: 20px; cursor: pointer;">&times;</button>
+      </div>
+      <div id="documentLibraryList"></div>
+      <div style="margin-top: 16px; text-align: center;">
+        <button id="refreshLibrary" style="background: #4f46e5; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Refresh</button>
+      </div>
+    </div>
+  </div>
+  
+  <script src="libs/jspdf.min.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
