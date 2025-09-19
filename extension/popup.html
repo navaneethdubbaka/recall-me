@@ -151,10 +151,6 @@
       <input type="text" id="apiUrl" placeholder="http://localhost:5000" value="http://localhost:5000">
     </div>
     
-    <div class="input-group">
-      <label for="webhookUrl">AI Agent Webhook URL:</label>
-      <input type="text" id="webhookUrl" placeholder="https://your-n8n-instance.com/webhook/your-webhook-id">
-    </div>
     
     <div class="input-group">
       <label for="query">Query:</label>
@@ -172,23 +168,19 @@
       </label>
     </div>
     
-    <div class="input-group">
-      <label>
-        <input type="checkbox" id="enableAI"> Enable AI Agent Response
-      </label>
-    </div>
     
     <div class="input-group">
       <label for="exportFormat">Export Format:</label>
       <select id="exportFormat">
-        <option value="paste">Paste to Chat</option>
-        <option value="pdf">PDF Document</option>
+        <option value="select_chat">Copy & Paste Agent Response</option>
+        <option value="pdf">Convert Agent Response to PDF</option>
         <option value="markdown">Markdown Text</option>
         <option value="json">JSON Data</option>
       </select>
     </div>
     
     <button id="searchBtn">Search & Export</button>
+    <button id="debugBtn" style="margin-top: 8px; background: #6b7280; font-size: 12px;">Debug Page Elements</button>
     <button id="savedSearchesBtn" style="margin-top: 8px; background: #1e2230;">Saved Searches</button>
     <button id="documentLibraryBtn" style="margin-top: 8px; background: #1e2230;">Document Library</button>
     
