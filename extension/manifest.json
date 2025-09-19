@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Recall Me - Study Assistant",
+  "version": "1.0.0",
+  "description": "Retrieve and paste PDF content into ChatGPT/Perplexity for study assistance",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://chat.openai.com/*",
+    "https://www.perplexity.ai/*",
+    "http://localhost:5000/*",
+    "https://*.ngrok-free.app/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Recall Me Study Assistant"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.openai.com/*",
+        "https://www.perplexity.ai/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
