@@ -35,6 +35,7 @@
   },
   "host_permissions": [
     "https://chat.openai.com/*",
+    "https://chatgpt.com/*",
     "https://www.perplexity.ai/*",
     "http://localhost:5000/*",
     "https://*.ngrok-free.app/*"
@@ -53,6 +54,7 @@
     {
       "matches": [
         "https://chat.openai.com/*",
+        "https://chatgpt.com/*",
         "https://www.perplexity.ai/*"
       ],
       "js": ["content.js"],

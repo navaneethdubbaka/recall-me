@@ -18,17 +18,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   const savedSearchesList = document.getElementById('savedSearchesList');
   const clearAllSearches = document.getElementById('clearAllSearches');
   const exportFormatSelect = document.getElementById('exportFormat');
-  const documentLibraryBtn = document.getElementById('documentLibraryBtn');
-  const documentLibraryModal = document.getElementById('documentLibraryModal');
-  const closeLibraryModal = document.getElementById('closeLibraryModal');
-  const documentLibraryList = document.getElementById('documentLibraryList');
-  const refreshLibrary = document.getElementById('refreshLibrary');
   const debugBtn = document.getElementById('debugBtn');
+  const testPdfBtn = document.getElementById('testPdfBtn');
+  const copyChatBtn = document.getElementById('copyChatBtn');
+  const copyChatTextBtn = document.getElementById('copyChatTextBtn');
+  const testBtn = document.getElementById('testBtn');
+  const toggleFloatingBtn = document.getElementById('toggleFloatingBtn');
+  const forceAddBtn = document.getElementById('forceAddBtn');
+  const currentPageDiv = document.getElementById('currentPage');
 
   // Load saved settings
   const result = await chrome.storage.sync.get(['studyMode', 'apiUrl']);
   const studyMode = result.studyMode || false;
   const savedApiUrl = result.apiUrl || 'http://localhost:5000';
+
+  // Update current page info
+  await updateCurrentPageInfo();
 
   // Update UI
   updateUI(studyMode);
@@ -89,22 +94,227 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Document library modal
-  documentLibraryBtn.addEventListener('click', () => {
-    showDocumentLibraryModal();
+
+  // Copy entire chat to PDF button
+  copyChatBtn.addEventListener('click', async () => {
+    showLoading(true);
+    hideMessages();
+    
+    try {
+      // Get the current active tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      console.log('Current tab:', tab.url, tab.title);
+      
+      // Check if we're on a supported page
+      if (!tab.url.includes('chat.openai.com') && !tab.url.includes('chatgpt.com') && !tab.url.includes('perplexity.ai')) {
+        showError('Please open this extension while on ChatGPT (chatgpt.com or chat.openai.com) or Perplexity (perplexity.ai)');
+        return;
+      }
+      
+      // Send message to content script to get all chat text
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        action: 'getAllChatText'
+      });
+      
+      console.log('Response from content script:', response);
+      
+      if (response && response.chatText && response.chatText.trim()) {
+        // Generate PDF from chat text
+        const pdfBlob = await generatePDFFromChatText(response.chatText, 'Entire Chat Export');
+        
+        // Download the PDF
+        const url = URL.createObjectURL(pdfBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `chat-export-${new Date().toISOString().split('T')[0]}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        showSuccess('Entire chat copied and converted to PDF successfully!');
+      } else {
+        showError('No chat text found. Please make sure you have an active conversation on this page.');
+      }
+    } catch (error) {
+      console.error('Failed to copy entire chat:', error);
+      if (error.message.includes('Could not establish connection')) {
+        showError('Content script not loaded. Please refresh the ChatGPT/Perplexity page and try again.');
+      } else {
+        showError('Failed to copy entire chat. Please make sure you are on a supported page (ChatGPT/Perplexity).');
+      }
+    } finally {
+      showLoading(false);
+    }
   });
 
-  closeLibraryModal.addEventListener('click', () => {
-    documentLibraryModal.style.display = 'none';
+  // Copy entire chat to clipboard button
+  copyChatTextBtn.addEventListener('click', async () => {
+    showLoading(true);
+    hideMessages();
+    
+    try {
+      // Get the current active tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      console.log('Current tab:', tab.url, tab.title);
+      
+      // Check if we're on a supported page
+      if (!tab.url.includes('chat.openai.com') && !tab.url.includes('chatgpt.com') && !tab.url.includes('perplexity.ai')) {
+        showError('Please open this extension while on ChatGPT (chatgpt.com or chat.openai.com) or Perplexity (perplexity.ai)');
+        return;
+      }
+      
+      // Send message to content script to get all chat text
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        action: 'getAllChatText'
+      });
+      
+      console.log('Response from content script:', response);
+      
+      if (response && response.chatText && response.chatText.trim()) {
+        // Copy to clipboard
+        await navigator.clipboard.writeText(response.chatText);
+        
+        showSuccess('Entire chat copied to clipboard successfully!');
+      } else {
+        showError('No chat text found. Please make sure you have an active conversation on this page.');
+      }
+    } catch (error) {
+      console.error('Failed to copy entire chat:', error);
+      if (error.message.includes('Could not establish connection')) {
+        showError('Content script not loaded. Please refresh the ChatGPT/Perplexity page and try again.');
+      } else {
+        showError('Failed to copy entire chat. Please make sure you are on a supported page (ChatGPT/Perplexity).');
+      }
+    } finally {
+      showLoading(false);
+    }
   });
 
-  refreshLibrary.addEventListener('click', () => {
-    loadDocumentLibrary();
+  // Toggle floating button
+  toggleFloatingBtn.addEventListener('click', async () => {
+    try {
+      // Get the current active tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      // Check if we're on a supported page
+      if (!tab.url.includes('chat.openai.com') && !tab.url.includes('chatgpt.com') && !tab.url.includes('perplexity.ai')) {
+        showError('Please open this extension while on ChatGPT (chatgpt.com or chat.openai.com) or Perplexity (perplexity.ai)');
+        return;
+      }
+      
+      // Toggle floating button
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        action: 'toggleFloatingButton'
+      });
+      
+      if (response && response.visible) {
+        showSuccess('Floating button is now visible on the page!');
+        toggleFloatingBtn.textContent = 'Hide Floating Button';
+        toggleFloatingBtn.style.background = '#ef4444';
+      } else {
+        showSuccess('Floating button is now hidden.');
+        toggleFloatingBtn.textContent = 'Show Floating Button';
+        toggleFloatingBtn.style.background = '#8b5cf6';
+      }
+    } catch (error) {
+      console.error('Failed to toggle floating button:', error);
+      if (error.message.includes('Could not establish connection')) {
+        showError('Content script not loaded. Please refresh the ChatGPT/Perplexity page and try again.');
+      } else {
+        showError('Failed to toggle floating button. Please make sure you are on a supported page.');
+      }
+    }
+  });
+
+  // Force add floating button
+  forceAddBtn.addEventListener('click', async () => {
+    try {
+      // Get the current active tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      // Check if we're on a supported page
+      if (!tab.url.includes('chat.openai.com') && !tab.url.includes('chatgpt.com') && !tab.url.includes('perplexity.ai')) {
+        showError('Please open this extension while on ChatGPT (chatgpt.com or chat.openai.com) or Perplexity (perplexity.ai)');
+        return;
+      }
+      
+      // Force add floating button
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        action: 'forceAddFloatingButton'
+      });
+      
+      if (response && response.success) {
+        showSuccess('Floating button force added successfully!');
+      } else {
+        showError('Failed to add floating button. Check console for details.');
+      }
+    } catch (error) {
+      console.error('Failed to force add floating button:', error);
+      if (error.message.includes('Could not establish connection')) {
+        showError('Content script not loaded. Please refresh the ChatGPT/Perplexity page and try again.');
+      } else {
+        showError('Failed to force add floating button. Please make sure you are on a supported page.');
+      }
+    }
+  });
+
+  // Test button
+  testBtn.addEventListener('click', async () => {
+    showLoading(true);
+    hideMessages();
+    
+    try {
+      // Get the current active tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      console.log('Test - Current tab:', tab.url, tab.title);
+      
+      // Check if we're on a supported page
+      if (!tab.url.includes('chat.openai.com') && !tab.url.includes('chatgpt.com') && !tab.url.includes('perplexity.ai')) {
+        showError('Please open this extension while on ChatGPT (chatgpt.com or chat.openai.com) or Perplexity (perplexity.ai)');
+        return;
+      }
+      
+      // Test basic communication
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        action: 'testTextExtraction'
+      });
+      
+      console.log('Test response:', response);
+      
+      if (response && response.chatText) {
+        showSuccess(`Extension is working! Test message: "${response.chatText}"`);
+      } else {
+        showError('Extension communication failed. Content script may not be loaded.');
+      }
+    } catch (error) {
+      console.error('Test failed:', error);
+      if (error.message.includes('Could not establish connection')) {
+        showError('Content script not loaded. Please refresh the ChatGPT/Perplexity page and try again.');
+      } else {
+        showError('Extension test failed. Please make sure you are on a supported page and reload the extension.');
+      }
+    } finally {
+      showLoading(false);
+    }
   });
 
   // Debug button
   debugBtn.addEventListener('click', async () => {
     try {
+      // Get the current active tab
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      console.log('Debug - Current tab:', tab.url, tab.title);
+      
+      // Check if we're on a supported page
+      if (!tab.url.includes('chat.openai.com') && !tab.url.includes('chatgpt.com') && !tab.url.includes('perplexity.ai')) {
+        showError('Please open this extension while on ChatGPT (chatgpt.com or chat.openai.com) or Perplexity (perplexity.ai)');
+        return;
+      }
       
       // Send message to content script to run debug function
       await chrome.tabs.sendMessage(tab.id, {
@@ -114,9 +324,63 @@ document.addEventListener('DOMContentLoaded', async () => {
       showSuccess('Debug info printed to console. Check browser dev tools (F12) > Console tab.');
     } catch (error) {
       console.error('Failed to run debug:', error);
-      showError('Failed to run debug. Please make sure you are on a supported page.');
+      if (error.message.includes('Could not establish connection')) {
+        showError('Content script not loaded. Please refresh the ChatGPT/Perplexity page and try again.');
+      } else {
+        showError('Failed to run debug. Please make sure you are on a supported page.');
+      }
     }
   });
+
+  // Test PDF button
+  testPdfBtn.addEventListener('click', async () => {
+    try {
+      // Get the current active tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      console.log('Test PDF - Current tab:', tab.url, tab.title);
+      
+      // Check if we're on a supported page
+      if (!tab.url.includes('chat.openai.com') && !tab.url.includes('chatgpt.com') && !tab.url.includes('perplexity.ai')) {
+        showError('Please open this extension while on ChatGPT (chatgpt.com or chat.openai.com) or Perplexity (perplexity.ai)');
+        return;
+      }
+      
+      // Send message to content script to test PDF generation
+      await chrome.tabs.sendMessage(tab.id, {
+        action: 'testPdfGeneration'
+      });
+      
+      showSuccess('PDF test initiated. Check console for details and download.');
+    } catch (error) {
+      console.error('PDF test failed:', error);
+      if (error.message.includes('Could not establish connection')) {
+        showError('Content script not loaded. Please refresh the ChatGPT/Perplexity page and try again.');
+      } else {
+        showError('PDF test failed. Please make sure you are on a supported page.');
+      }
+    }
+  });
+
+  async function updateCurrentPageInfo() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      if (tab.url.includes('chat.openai.com') || tab.url.includes('chatgpt.com')) {
+        currentPageDiv.innerHTML = '🟢 Connected to: <strong>ChatGPT</strong><br><small>' + tab.title + '</small>';
+        currentPageDiv.style.color = '#10b981';
+      } else if (tab.url.includes('perplexity.ai')) {
+        currentPageDiv.innerHTML = '🟢 Connected to: <strong>Perplexity</strong><br><small>' + tab.title + '</small>';
+        currentPageDiv.style.color = '#10b981';
+      } else {
+        currentPageDiv.innerHTML = '🔴 Not on supported page<br><small>Please go to ChatGPT or Perplexity</small>';
+        currentPageDiv.style.color = '#ef4444';
+      }
+    } catch (error) {
+      currentPageDiv.innerHTML = '❌ Error loading page info';
+      currentPageDiv.style.color = '#ef4444';
+    }
+  }
 
   function updateUI(mode) {
     studyToggle.classList.toggle('active', mode);
@@ -172,8 +436,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       // Send query to Flask agent
       const response = await fetch(`${apiUrl}/ai_search?query=${encodeURIComponent(query)}`);
-      
-      if (!response.ok) {
+    
+    if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
@@ -238,7 +502,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       return agentResponse.response;
     } else if (agentResponse.text) {
       return agentResponse.text;
-    } else {
+      } else {
       return JSON.stringify(agentResponse, null, 2);
     }
   }
@@ -613,99 +877,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Document Library Functions
-  async function showDocumentLibraryModal() {
-    documentLibraryModal.style.display = 'block';
-    await loadDocumentLibrary();
-  }
-
-  async function loadDocumentLibrary() {
-    try {
-      documentLibraryList.innerHTML = '<p style="color: #9aa3b2; text-align: center;">Loading documents...</p>';
-      
-      const apiUrl = apiUrlInput.value.trim();
-      const response = await fetch(`${apiUrl}/get_document_info`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.error) {
-        documentLibraryList.innerHTML = `<p style="color: #ef4444; text-align: center;">Error: ${data.error}</p>`;
-        return;
-      }
-      
-      if (data.documents.length === 0) {
-        documentLibraryList.innerHTML = '<p style="color: #9aa3b2; text-align: center;">No documents indexed yet. Upload a PDF to get started.</p>';
-        return;
-      }
-      
-      let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px;">';
-      
-      data.documents.forEach(doc => {
-        html += `
-          <div style="background: #12141a; border: 1px solid #1e2230; border-radius: 6px; padding: 8px; text-align: center;">
-            <div style="height: 80px; background: #1e2230; border-radius: 4px; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; color: #9aa3b2;">
-              📄
-            </div>
-            <div style="font-size: 12px; color: #e6e8ee; margin-bottom: 4px;">Page ${doc.page}</div>
-            <div style="font-size: 10px; color: #9aa3b2; margin-bottom: 8px;">${doc.image_count} images</div>
-            <button onclick="searchDocumentPage(${doc.page})" style="background: #4f46e5; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; width: 100%;">Search</button>
-          </div>
-        `;
-      });
-      
-      html += '</div>';
-      documentLibraryList.innerHTML = html;
-      
-    } catch (err) {
-      console.error('Failed to load document library:', err);
-      documentLibraryList.innerHTML = `<p style="color: #ef4444; text-align: center;">Error loading documents: ${err.message}</p>`;
-    }
-  }
-
-  // Global function for document page search
-  window.searchDocumentPage = async function(pageNumber) {
-    const query = prompt(`Enter search query for page ${pageNumber}:`);
-    if (query) {
-      const apiUrl = apiUrlInput.value.trim();
-      const k = parseInt(kInput.value) || 5;
-      
-      try {
-        showLoading(true);
-        hideMessages();
-        
-        const response = await fetch(`${apiUrl}/ai_search?query=${encodeURIComponent(query)}`);
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        
-        if (data.error) {
-          throw new Error(data.error);
-        }
-        
-        // Filter results to only show results from the specified page
-        const filteredData = {
-          ...data,
-          hits: data.hits.filter(hit => hit.metadata?.page === pageNumber)
-        };
-        
-        // Close modal and perform search
-        documentLibraryModal.style.display = 'none';
-        await searchAndExport(apiUrl, query, k, exportFormatSelect.value);
-        
-      } catch (err) {
-        showError(`Error searching page ${pageNumber}: ${err.message}`);
-      } finally {
-        showLoading(false);
-      }
-    }
-  };
 });
 
 
