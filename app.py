@@ -1,25 +1,45 @@
 import os
 import json
 from typing import Any, Dict
+import requests
+from dotenv import load_dotenv
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
-from services.ingest import process_pdf, ensure_dirs
-from services.indexer import add_to_text_index, add_to_image_index
-from services.retriever import search as search_service
+from services.langchain_pipeline import build_unified_index, search_unified_lc
 
 
 app = Flask(__name__)
 
 
 def _config_defaults() -> Dict[str, Any]:
-    return {
-        "OCR_ENABLED": os.environ.get("OCR_ENABLED", "false").lower() == "true",
-        "OCR_LANGUAGES": os.environ.get("OCR_LANGUAGES", "eng"),
-        "MAX_PAGES": int(os.environ.get("MAX_PAGES", "0")) or None,
-        "EMBEDDING_MODEL": os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
-        "INDEX_TYPE": os.environ.get("INDEX_TYPE", "IP").upper(),
-    }
+    return {}
+
+
+def ensure_dirs() -> Dict[str, str]:
+    base_dir = os.getcwd()
+    static_dir = os.path.join(base_dir, "static")
+    uploads_dir = os.path.join(static_dir, "uploads")
+    data_dir = os.path.join(base_dir, "data", "index")
+    os.makedirs(static_dir, exist_ok=True)
+    os.makedirs(uploads_dir, exist_ok=True)
+    os.makedirs(data_dir, exist_ok=True)
+    return {"base": base_dir, "uploads": uploads_dir, "data": data_dir}
+
+
+def _get_webhook_url() -> str | None:
+    return os.environ.get("WEBHOOK_URL")
+
+
+def _post_to_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
+    url = _get_webhook_url()
+    if not url:
+        return {"posted": False, "reason": "WEBHOOK_URL not set"}
+    try:
+        resp = requests.post(url, json=payload, timeout=15)
+        return {"posted": True, "status_code": resp.status_code}
+    except Exception as e:
+        return {"posted": False, "error": str(e)}
 
 
 @app.route("/")
@@ -53,58 +73,66 @@ def static_files(filename: str):
 
 
 @app.route("/upload", methods=["POST"])
-def upload() -> Any:
-    cfg = _config_defaults()
+def upload_redirect_to_lc() -> Any:
+    # Keep route name but use LangChain pipeline for simplicity
+    return upload_langchain()
+
+
+@app.route("/search", methods=["GET"])
+def search_redirect_to_lc() -> Any:
+    # Keep route name but use LangChain pipeline for simplicity
+    return search_langchain()
+
+
+@app.route("/search_unified", methods=["GET"])
+def search_unified_route() -> Any:
+    # Backward compatibility: use LangChain
+    return search_langchain()
+
+
+@app.route("/upload_lc", methods=["POST"])
+def upload_langchain() -> Any:
     paths = ensure_dirs()
     if "file" not in request.files:
         return jsonify({"error": "No file part"}), 400
     file = request.files["file"]
     if file.filename == "":
         return jsonify({"error": "No selected file"}), 400
-
-    # Save uploaded PDF
     pdf_path = os.path.join(paths["uploads"], file.filename)
     file.save(pdf_path)
-
-    # Ingest
-    doc_id, text_chunks, images, tables = process_pdf(
-        pdf_path,
-        ocr_enabled=cfg["OCR_ENABLED"],
-        ocr_languages=cfg["OCR_LANGUAGES"],
-        max_pages=cfg["MAX_PAGES"],
-    )
-
-    # Index
-    model_name = request.form.get("model") or cfg["EMBEDDING_MODEL"]
-    index_type = request.form.get("index_type") or cfg["INDEX_TYPE"]
-    added_text, total_text = add_to_text_index(text_chunks, model_name=model_name, index_type=index_type)
-    added_images, total_images = add_to_image_index(images, model_name=model_name, index_type=index_type)
-
-    return jsonify(
-        {
-            "doc_id": doc_id,
-            "uploaded": os.path.basename(pdf_path),
-            "text_chunks_added": added_text,
-            "image_captions_added": added_images,
-            "totals": {"text": total_text, "images": total_images},
-            "tables_count": len(tables),
-        }
-    )
+    stats = build_unified_index(pdf_path)
+    payload = {"event": "upload_lc", "file": os.path.basename(pdf_path), **stats}
+    webhook_result = _post_to_webhook(payload)
+    return jsonify({"status": "ok", **stats, "webhook": webhook_result})
 
 
-@app.route("/search", methods=["GET"])
-def search() -> Any:
+@app.route("/search_lc", methods=["GET"])
+def search_langchain() -> Any:
     query = request.args.get("query", "").strip()
-    k = int(request.args.get("k", "3"))
-    model_name = request.args.get("model") or _config_defaults()["EMBEDDING_MODEL"]
-    index_type = (request.args.get("index_type") or _config_defaults()["INDEX_TYPE"]).upper()
+    k = int(request.args.get("k", "5"))
     if not query:
         return jsonify({"error": "Missing query"}), 400
-    results = search_service(query, k, model_name=model_name, index_type=index_type)
-    return jsonify(results)
+    res = search_unified_lc(query, k)
+    payload = {"event": "search_lc", "query": query, "k": k, **res}
+    webhook_result = _post_to_webhook(payload)
+    return jsonify({**res, "webhook": webhook_result})
+
+
+@app.route("/search_lc_page", methods=["GET"])
+def search_langchain_page() -> Any:
+    query = request.args.get("query", "").strip()
+    k = int(request.args.get("k", "5"))
+    if not query:
+        return jsonify({"error": "Missing query"}), 400
+    res = search_unified_lc(query, k)
+    payload = {"event": "search_lc_page", "query": query, "k": k, **res}
+    webhook_result = _post_to_webhook(payload)
+    return jsonify({**res, "webhook": webhook_result})
 
 
 if __name__ == "__main__":
+    # Load environment variables from .env at startup
+    load_dotenv()
     ensure_dirs()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
 

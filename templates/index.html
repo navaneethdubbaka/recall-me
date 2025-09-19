@@ -2,48 +2,24 @@
 {% block content %}
 <section class="card">
   <h2>Upload PDF</h2>
-  <form class="grid" action="/upload" method="post" enctype="multipart/form-data">
+  <form class="grid" action="/upload_lc" method="post" enctype="multipart/form-data">
     <label class="file-input">
       <span>Select a PDF</span>
       <input type="file" name="file" accept="application/pdf" required />
     </label>
-    <select name="model" title="Embedding model">
-      <option value="BAAI/bge-small-en-v1.5" selected>BAAI/bge-small-en-v1.5</option>
-      <option value="all-MiniLM-L6-v2">all-MiniLM-L6-v2</option>
-    </select>
-    <select name="index_type" title="FAISS index type">
-      <option value="IP" selected>IndexFlatIP (cosine)</option>
-      <option value="L2">IndexFlatL2</option>
-    </select>
-    <button type="submit">Upload</button>
+    <button type="submit">Build LC Index</button>
   </form>
-  <p class="muted">PDF is parsed into text chunks, images, and tables. Indexes are updated.</p>
-  <details>
-    <summary>Notes</summary>
-    <ul>
-      <li>Uses Unstructured with layout-aware chunking.</li>
-      <li>Captions are placeholders for now.</li>
-      <li>Embeddings via sentence-transformers; FAISS IndexFlatIP.</li>
-    </ul>
-  </details>
+  <p class="muted">Builds a unified FAISS index using CLIP embeddings for text and images.</p>
 </section>
 
 <section class="card">
   <h2>Search</h2>
-  <form class="grid" action="/search" method="get">
+  <form class="grid" action="/search_lc_page" method="get">
     <input type="text" name="query" placeholder="Search your PDFs..." required />
-    <input type="number" name="k" min="1" max="10" value="3" />
-    <select name="model" title="Embedding model">
-      <option value="BAAI/bge-small-en-v1.5" selected>BAAI/bge-small-en-v1.5</option>
-      <option value="all-MiniLM-L6-v2">all-MiniLM-L6-v2</option>
-    </select>
-    <select name="index_type" title="FAISS index type">
-      <option value="IP" selected>IndexFlatIP (cosine)</option>
-      <option value="L2">IndexFlatL2</option>
-    </select>
-    <button type="submit">Search (JSON)</button>
+    <input type="number" name="k" min="1" max="10" value="5" />
+    <button type="submit">Search & View</button>
   </form>
-  <p class="muted">Returns JSON: text hits with citations and image results with paths.</p>
+  <p class="muted">Renders text excerpts and images inline.</p>
 </section>
 {% endblock %}
 

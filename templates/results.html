@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <h2>Results for "{{ query }}" (k={{ k }})</h2>
+  <div class="results">
+    {% for hit in hits %}
+      <div class="result">
+        <div class="result-meta">
+          <span class="badge">#{{ hit.rank }}</span>
+          {% if hit.metadata and hit.metadata.type %}
+            <span class="badge">{{ hit.metadata.type }}</span>
+          {% endif %}
+          {% if hit.metadata and hit.metadata.page is not none %}
+            <span class="muted">page {{ hit.metadata.page }}</span>
+          {% endif %}
+          {% if hit.score %}
+            <span class="muted">score {{ '%.3f'|format(hit.score) }}</span>
+          {% endif %}
+        </div>
+
+        {% if hit.image_base64 %}
+          <pre style="white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; background:#0e1117; padding:12px; border-radius:8px; border:1px solid var(--border);">{{ hit.image_base64 }}</pre>
+        {% else %}
+          <p>{{ hit.content }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  <form class="grid" action="/search_lc_page" method="get" style="margin-top:16px;">
+    <input type="text" name="query" value="{{ query }}" />
+    <input type="number" name="k" min="1" max="10" value="{{ k }}" />
+    <button type="submit">Search</button>
+  </form>
+</section>
+{% endblock %}
+
+
