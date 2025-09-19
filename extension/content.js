@@ -76,14 +76,53 @@ function pasteToChat(content, fullResponse = {}, webhookResponse = {}, aiRespons
       let completeContent = '';
       
       // Add webhook response if available - ONLY webhook response, nothing else
-      if (webhookResponse && Object.keys(webhookResponse).length > 0) {
+      if (webhookResponse !== null && webhookResponse !== undefined) {
         console.log('Adding webhook response only...');
-        completeContent = JSON.stringify(webhookResponse, null, 2);
+        console.log('Webhook response type:', typeof webhookResponse);
+        console.log('Webhook response is array:', Array.isArray(webhookResponse));
         
-        // Copy webhook response to clipboard
+        // Extract meaningful content from webhook response
+        let webhookContent = '';
+        
+        if (Array.isArray(webhookResponse)) {
+          // Handle array responses (like from n8n workflows)
+          if (webhookResponse.length > 0 && webhookResponse[0].output) {
+            webhookContent = webhookResponse[0].output;
+          } else if (webhookResponse.length > 0 && webhookResponse[0].message) {
+            webhookContent = webhookResponse[0].message;
+          } else if (webhookResponse.length > 0 && webhookResponse[0].content) {
+            webhookContent = webhookResponse[0].content;
+          } else {
+            // If array doesn't have expected fields, stringify the first item
+            webhookContent = JSON.stringify(webhookResponse[0], null, 2);
+          }
+        } else if (webhookResponse.output) {
+          webhookContent = webhookResponse.output;
+        } else if (webhookResponse.message) {
+          webhookContent = webhookResponse.message;
+        } else if (webhookResponse.content) {
+          webhookContent = webhookResponse.content;
+        } else if (webhookResponse.response) {
+          webhookContent = webhookResponse.response;
+        } else if (webhookResponse.text) {
+          webhookContent = webhookResponse.text;
+        } else if (webhookResponse.answer) {
+          webhookContent = webhookResponse.answer;
+        } else if (webhookResponse.result) {
+          webhookContent = webhookResponse.result;
+        } else if (webhookResponse.data) {
+          webhookContent = webhookResponse.data;
+        } else {
+          // Fall back to JSON stringify for complex objects
+          webhookContent = JSON.stringify(webhookResponse, null, 2);
+        }
+        
+        completeContent = webhookContent;
+        
+        // Copy webhook response to clipboard (TEXT ONLY - NO IMAGES)
         try {
           navigator.clipboard.writeText(completeContent).then(() => {
-            console.log('✓ Webhook response copied to clipboard (content script)');
+            console.log('✓ Webhook response (text only) copied to clipboard (content script)');
           }).catch(err => {
             console.error('Failed to copy webhook response to clipboard (content script):', err);
           });
@@ -106,13 +145,49 @@ function pasteToChat(content, fullResponse = {}, webhookResponse = {}, aiRespons
       // For regular textareas, only paste webhook response
       let completeContent = '';
       
-      if (webhookResponse && Object.keys(webhookResponse).length > 0) {
-        completeContent = JSON.stringify(webhookResponse, null, 2);
+      if (webhookResponse !== null && webhookResponse !== undefined) {
+        // Extract meaningful content from webhook response
+        let webhookContent = '';
         
-        // Copy webhook response to clipboard
+        if (Array.isArray(webhookResponse)) {
+          // Handle array responses (like from n8n workflows)
+          if (webhookResponse.length > 0 && webhookResponse[0].output) {
+            webhookContent = webhookResponse[0].output;
+          } else if (webhookResponse.length > 0 && webhookResponse[0].message) {
+            webhookContent = webhookResponse[0].message;
+          } else if (webhookResponse.length > 0 && webhookResponse[0].content) {
+            webhookContent = webhookResponse[0].content;
+          } else {
+            // If array doesn't have expected fields, stringify the first item
+            webhookContent = JSON.stringify(webhookResponse[0], null, 2);
+          }
+        } else if (webhookResponse.output) {
+          webhookContent = webhookResponse.output;
+        } else if (webhookResponse.message) {
+          webhookContent = webhookResponse.message;
+        } else if (webhookResponse.content) {
+          webhookContent = webhookResponse.content;
+        } else if (webhookResponse.response) {
+          webhookContent = webhookResponse.response;
+        } else if (webhookResponse.text) {
+          webhookContent = webhookResponse.text;
+        } else if (webhookResponse.answer) {
+          webhookContent = webhookResponse.answer;
+        } else if (webhookResponse.result) {
+          webhookContent = webhookResponse.result;
+        } else if (webhookResponse.data) {
+          webhookContent = webhookResponse.data;
+        } else {
+          // Fall back to JSON stringify for complex objects
+          webhookContent = JSON.stringify(webhookResponse, null, 2);
+        }
+        
+        completeContent = webhookContent;
+        
+        // Copy webhook response to clipboard (TEXT ONLY - NO IMAGES)
         try {
           navigator.clipboard.writeText(completeContent).then(() => {
-            console.log('✓ Webhook response copied to clipboard (textarea)');
+            console.log('✓ Webhook response (text only) copied to clipboard (textarea)');
           }).catch(err => {
             console.error('Failed to copy webhook response to clipboard (textarea):', err);
           });

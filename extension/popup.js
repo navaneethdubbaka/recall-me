@@ -133,8 +133,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     hideMessages();
 
     try {
-      // Search the API
-      const response = await fetch(`${apiUrl}/search_lc?query=${encodeURIComponent(query)}&k=${k}`);
+      // Use AI-only endpoint when AI is enabled
+      let response;
+      if (enableAI && webhookUrl) {
+        // Use AI-only endpoint
+        response = await fetch(`${apiUrl}/ai_search?query=${encodeURIComponent(query)}`);
+      } else {
+        // For non-AI mode, use the chat endpoint as fallback
+        response = await fetch(`${apiUrl}/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ message: query })
+        });
+      }
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -148,55 +161,129 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Debug: log the full response to see what we're getting
       console.log('=== API RESPONSE DEBUG ===');
-      console.log('API URL called:', `${apiUrl}/search_lc?query=${encodeURIComponent(query)}&k=${k}`);
+      if (enableAI && webhookUrl) {
+        console.log('API URL called:', `${apiUrl}/ai_search?query=${encodeURIComponent(query)}`);
+      } else {
+        console.log('API URL called:', `${apiUrl}/chat (POST)`);
+      }
       console.log('Response status:', response.status);
       console.log('Full API response:', data);
       console.log('Response keys:', Object.keys(data));
       console.log('Hits:', data.hits);
       console.log('Images:', data.images);
       console.log('Image paths:', data.image_paths);
-      console.log('Image paths type:', typeof data.image_paths);
-      console.log('Image paths keys:', data.image_paths ? Object.keys(data.image_paths) : 'undefined');
+      console.log('AI Response in data:', data.ai_response);
+      console.log('Webhook result:', data.webhook);
 
       // Get AI agent response if enabled
       let aiResponse = null;
       if (enableAI && webhookUrl) {
-        console.log('=== AI AGENT REQUEST ===');
-        console.log('Webhook URL:', webhookUrl);
+        console.log('=== AI AGENT RESPONSE FROM SEARCH ENDPOINT ===');
+        console.log('API URL:', apiUrl);
         console.log('Query:', query);
+        console.log('Enable AI:', enableAI);
+        console.log('Webhook URL configured:', !!webhookUrl);
         
-        // Show specific loading message for webhook
-        showLoading(true);
-        hideMessages();
-        loading.innerHTML = '🔄 Waiting for webhook response...';
+        // DEBUG: Check what we actually received from the API
+        console.log('=== DEBUG: FULL API RESPONSE ===');
+        console.log('data:', data);
+        console.log('data.ai_response:', data.ai_response);
+        console.log('data.webhook:', data.webhook);
+        console.log('data.webhook.response:', data.webhook?.response);
         
-        try {
-          aiResponse = await getAIResponse(webhookUrl, query, data);
+        // Check if AI response is already in the search results
+        if (data.ai_response) {
+          console.log('=== AI RESPONSE FOUND IN SEARCH RESULTS ===');
+          aiResponse = data.ai_response;
           console.log('AI Response received:', aiResponse);
-          loading.innerHTML = '✓ Webhook response received!';
-        } catch (aiErr) {
-          console.error('AI Agent request failed:', aiErr);
-          showError(`Webhook request failed: ${aiErr.message}`);
-          // Continue with RAG results even if AI fails
+          console.log('AI Response type:', typeof aiResponse);
+          console.log('AI Response is array:', Array.isArray(aiResponse));
+        } else if (data.webhook?.response) {
+          console.log('=== AI RESPONSE FOUND IN WEBHOOK RESPONSE ===');
+          aiResponse = data.webhook.response;
+          console.log('AI Response from webhook:', aiResponse);
+          console.log('AI Response type:', typeof aiResponse);
+          console.log('AI Response is array:', Array.isArray(aiResponse));
+        } else {
+          console.log('No AI response found in search results or webhook, trying separate AI chat endpoint...');
+          // Fallback to separate AI chat endpoint
+          try {
+            aiResponse = await getAIResponse(apiUrl, query, data);
+            console.log('=== AI RESPONSE RECEIVED FROM SEPARATE AI CHAT ENDPOINT ===');
+            console.log('AI Response received:', aiResponse);
+            console.log('AI Response type:', typeof aiResponse);
+            console.log('AI Response is array:', Array.isArray(aiResponse));
+          } catch (aiErr) {
+            console.error('AI Agent request via separate endpoint failed:', aiErr);
+            showError(`AI request failed: ${aiErr.message}`);
+            return;
+          }
+        }
+        
+        // FLASK CLIPBOARD COPY: Flask handles clipboard copying, extension just shows success
+        console.log('=== FLASK CLIPBOARD COPY MODE ===');
+        console.log('aiResponse:', aiResponse);
+        console.log('Clipboard copied by Flask:', data.clipboard_copied);
+        
+        if (data.clipboard_copied || aiResponse) {
+          loading.innerHTML = '✓ AI response received and copied to clipboard by Flask!';
+          console.log('✓ AI response received, Flask has copied to clipboard');
+          showSuccess('AI response received and copied to clipboard! You can now paste it anywhere.');
+          return; // Exit early - Flask has handled everything
+        } else {
+          console.log('❌ No AI response received from Flask');
+          showError('No AI response received from Flask');
+          return;
         }
       }
 
       // Handle different export formats
-      switch (exportFormat) {
-        case 'paste':
-          await handlePasteExport(data, query, aiResponse);
-          break;
-        case 'pdf':
-          await handlePDFExport(data, query, aiResponse);
-          break;
-        case 'markdown':
-          await handleMarkdownExport(data, query, aiResponse);
-          break;
-        case 'json':
-          await handleJSONExport(data, query, aiResponse);
-          break;
-        default:
-          await handlePasteExport(data, query, aiResponse);
+      // When AI is enabled, only use webhook response (aiResponse)
+      if (enableAI && webhookUrl) {
+        console.log('=== AI MODE: Using ONLY AI response from Flask API, ignoring RAG data ===');
+        console.log('Enable AI:', enableAI);
+        console.log('Webhook URL configured:', webhookUrl);
+        console.log('AI Response to be used:', aiResponse);
+        console.log('AI Response type:', typeof aiResponse);
+        console.log('AI Response is array:', Array.isArray(aiResponse));
+        console.log('RAG data being ignored:', data);
+        
+        // AI is enabled - only process webhook response, ignore RAG data completely
+        switch (exportFormat) {
+          case 'paste':
+            await handlePasteExport({}, query, aiResponse); // Empty RAG data, only AI response
+            break;
+          case 'pdf':
+            await handlePDFExport({}, query, aiResponse); // Empty RAG data, only AI response
+            break;
+          case 'markdown':
+            await handleMarkdownExport({}, query, aiResponse); // Empty RAG data, only AI response
+            break;
+          case 'json':
+            await handleJSONExport({}, query, aiResponse); // Empty RAG data, only AI response
+            break;
+          default:
+            await handlePasteExport({}, query, aiResponse); // Empty RAG data, only AI response
+        }
+      } else {
+        console.log('=== RAG MODE: Using document search results ===');
+        // AI is not enabled - use RAG data
+        switch (exportFormat) {
+          case 'paste':
+            await handlePasteExport(data, query, null);
+            break;
+          case 'pdf':
+            await handlePDFExport(data, query, null);
+            break;
+          case 'markdown':
+            await handleMarkdownExport(data, query, null);
+            break;
+          case 'json':
+            await handleJSONExport(data, query, null);
+            break;
+          default:
+            await handlePasteExport(data, query, null);
+        }
       }
       
     } catch (err) {
@@ -206,13 +293,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  async function getAIResponse(webhookUrl, query, ragData) {
-    console.log('Sending request to AI agent webhook...');
+  async function getAIResponse(apiUrl, query, ragData) {
+    console.log('Sending request to Flask AI chat endpoint...');
     
-    // Prepare the payload for the AI agent
+    // Prepare the payload for the Flask API
     const payload = {
-      event: 'chat_message',
-      message: query,
+      query: query,
       timestamp: new Date().toISOString(),
       session_id: 'extension_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
       rag_context: {
@@ -222,9 +308,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
     
-    console.log('AI Agent payload:', payload);
+    console.log('Flask API payload:', payload);
     
-    const response = await fetch(webhookUrl, {
+    const response = await fetch(`${apiUrl}/ai_chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -232,23 +318,41 @@ document.addEventListener('DOMContentLoaded', async () => {
       body: JSON.stringify(payload)
     });
     
+    console.log('Flask API response status:', response.status);
+    console.log('Flask API response headers:', Object.fromEntries(response.headers.entries()));
+    
     if (!response.ok) {
-      throw new Error(`AI Agent HTTP ${response.status}: ${response.statusText}`);
+      const errorText = await response.text();
+      console.error('Flask API error response:', errorText);
+      throw new Error(`Flask API HTTP ${response.status}: ${response.statusText} - ${errorText}`);
     }
     
-    const aiData = await response.json();
-    console.log('AI Agent initial response:', aiData);
-    
-    // Handle different response formats from n8n
-    if (aiData.message === "Workflow was started" || aiData.status === "processing") {
-      console.log('Workflow started, polling for AI response...');
+    let apiData;
+    try {
+      apiData = await response.json();
+      console.log('Flask API response:', apiData);
+      console.log('Response type:', typeof apiData);
+      console.log('Is array:', Array.isArray(apiData));
       
-      // Poll for the actual response with exponential backoff
-      return await pollForWebhookResponse(webhookUrl, payload.session_id, 0);
+      if (apiData && typeof apiData === 'object') {
+        console.log('Object keys:', Object.keys(apiData));
+        console.log('AI response in API data:', apiData.ai_response);
+      }
+    } catch (jsonError) {
+      console.error('Failed to parse JSON response:', jsonError);
+      const responseText = await response.text();
+      console.log('Raw response text:', responseText);
+      // If JSON parsing fails, treat the text as the response
+      apiData = { ai_response: { message: responseText } };
+    }
+    
+    // Extract the AI response from the Flask API response
+    if (apiData && apiData.ai_response) {
+      console.log('✓ AI response extracted from Flask API');
+      return apiData.ai_response;
     } else {
-      // Return the actual AI response immediately
-      console.log('AI response received immediately:', aiData);
-      return aiData;
+      console.log('❌ No AI response found in Flask API response');
+      throw new Error('No AI response received from Flask API');
     }
   }
 
@@ -270,26 +374,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     await new Promise(resolve => setTimeout(resolve, delay));
     
     try {
-      // Try to get the response (this might be a different endpoint or same endpoint with session ID)
-      const pollResponse = await fetch(`${webhookUrl}?session_id=${sessionId}`, {
-        method: 'GET',
+      // Try to get the response using a POST request with the session ID
+      // This is more likely to work with webhook endpoints
+      const pollResponse = await fetch(webhookUrl, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-        }
+        },
+        body: JSON.stringify({
+          action: 'get_response',
+          session_id: sessionId
+        })
       });
       
       if (pollResponse.ok) {
-        const responseData = await pollResponse.json();
-        console.log(`Poll attempt ${attempt + 1} response:`, responseData);
-        
-        // Check if we have a complete response
-        if (responseData.status === 'completed' || responseData.message || responseData.content || responseData.response) {
-          console.log('✓ Webhook response received:', responseData);
-          return responseData;
-        } else if (responseData.status === 'processing' || responseData.status === 'pending') {
-          // Still processing, continue polling
-          return await pollForWebhookResponse(webhookUrl, sessionId, attempt + 1);
+        let responseData;
+        try {
+          responseData = await pollResponse.json();
+          console.log(`Poll attempt ${attempt + 1} response:`, responseData);
+        } catch (jsonError) {
+          console.error('Failed to parse polling response JSON:', jsonError);
+          const responseText = await pollResponse.text();
+          console.log('Raw polling response text:', responseText);
+          responseData = { message: responseText };
         }
+        
+        // Accept ANY response that's not null/undefined and has content
+        if (responseData && responseData !== null && responseData !== undefined) {
+          // Check if it's still processing
+          if (responseData.status === 'processing' || responseData.status === 'pending' || responseData.message === 'Workflow was started') {
+            console.log('Still processing, continuing to poll...');
+            return await pollForWebhookResponse(webhookUrl, sessionId, attempt + 1);
+          } else {
+            // Check if response has meaningful content (including array responses)
+            const hasContent = responseData.message || 
+                              responseData.content || 
+                              responseData.response || 
+                              responseData.text || 
+                              responseData.answer || 
+                              responseData.result || 
+                              responseData.data ||
+                              responseData.output ||
+                              (Array.isArray(responseData) && responseData.length > 0 && (responseData[0].output || responseData[0].message || responseData[0].content)) ||
+                              (typeof responseData === 'string' && responseData.length > 0);
+            
+            if (hasContent) {
+              console.log('✓ Webhook response received with content:', responseData);
+              return responseData;
+            } else {
+              console.log('Response received but no meaningful content, continuing to poll...');
+              return await pollForWebhookResponse(webhookUrl, sessionId, attempt + 1);
+            }
+          }
+        }
+      } else {
+        console.log(`Poll attempt ${attempt + 1} failed with status: ${pollResponse.status}`);
+        const errorText = await pollResponse.text();
+        console.log('Polling error response:', errorText);
       }
       
       // If we get here, the response wasn't ready or was an error
@@ -599,15 +740,47 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Add AI Agent response if available
     if (aiResponse) {
       content += `## 🤖 AI Agent Response\n\n`;
-      if (aiResponse.message) {
-        content += `${aiResponse.message}\n\n`;
+      
+      // Handle different response formats more flexibly
+      let responseText = '';
+      
+      if (typeof aiResponse === 'string') {
+        responseText = aiResponse;
+      } else if (Array.isArray(aiResponse)) {
+        // Handle array responses (like from n8n workflows)
+        if (aiResponse.length > 0 && aiResponse[0].output) {
+          responseText = aiResponse[0].output;
+        } else if (aiResponse.length > 0 && aiResponse[0].message) {
+          responseText = aiResponse[0].message;
+        } else if (aiResponse.length > 0 && aiResponse[0].content) {
+          responseText = aiResponse[0].content;
+        } else {
+          // If array doesn't have expected fields, stringify the first item
+          responseText = JSON.stringify(aiResponse[0], null, 2);
+        }
+      } else if (aiResponse.output) {
+        responseText = aiResponse.output;
+      } else if (aiResponse.message) {
+        responseText = aiResponse.message;
       } else if (aiResponse.content) {
-        content += `${aiResponse.content}\n\n`;
+        responseText = aiResponse.content;
       } else if (aiResponse.response) {
-        content += `${aiResponse.response}\n\n`;
+        responseText = aiResponse.response;
+      } else if (aiResponse.text) {
+        responseText = aiResponse.text;
+      } else if (aiResponse.answer) {
+        responseText = aiResponse.answer;
+      } else if (aiResponse.result) {
+        responseText = aiResponse.result;
+      } else if (aiResponse.data) {
+        responseText = aiResponse.data;
       } else {
-        content += `${JSON.stringify(aiResponse, null, 2)}\n\n`;
+        // For any other format, try to extract meaningful content
+        // or fall back to JSON stringify
+        responseText = JSON.stringify(aiResponse, null, 2);
       }
+      
+      content += `${responseText}\n\n`;
       content += `---\n\n`;
     }
     
@@ -1139,17 +1312,114 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     console.log('=== HANDLE PASTE EXPORT ===');
     console.log('AI Response (webhook response):', aiResponse);
-    console.log('Data:', data);
+    console.log('AI Response type:', typeof aiResponse);
+    console.log('AI Response is null:', aiResponse === null);
+    console.log('AI Response is undefined:', aiResponse === undefined);
+    console.log('RAG Data (should be empty when AI enabled):', data);
     
-    // If we have a webhook response (aiResponse), use ONLY that
-    if (aiResponse && Object.keys(aiResponse).length > 0) {
-      console.log('Using webhook response only for pasting...');
-      
-      // Copy webhook response to clipboard first
+    // DIRECT BYPASS: If we have any AI response, force copy it immediately
+    if (aiResponse) {
+      console.log('🚀 DIRECT BYPASS: AI response detected, forcing immediate copy');
       try {
-        const webhookText = JSON.stringify(aiResponse, null, 2);
+        let responseText = '';
+        if (typeof aiResponse === 'string') {
+          responseText = aiResponse;
+        } else if (aiResponse.output) {
+          responseText = aiResponse.output;
+        } else if (aiResponse.message) {
+          responseText = aiResponse.message;
+        } else if (aiResponse.content) {
+          responseText = aiResponse.content;
+        } else {
+          responseText = JSON.stringify(aiResponse, null, 2);
+        }
+        
+        // Copy to clipboard immediately
+        await navigator.clipboard.writeText(responseText);
+        console.log('✅ DIRECT COPY: AI response copied to clipboard immediately');
+        
+        // Send to content script immediately
+        try {
+          await chrome.tabs.sendMessage(tab.id, {
+            action: 'pasteContent',
+            content: '',
+            fullResponse: {},
+            webhookResponse: aiResponse,
+            aiResponse: aiResponse,
+            query: query
+          });
+          
+          console.log('✅ DIRECT PASTE: AI response sent to content script immediately');
+          showSuccess('AI response copied and pasted successfully!');
+          return; // Exit early - we're done!
+          
+        } catch (contentScriptError) {
+          console.log('Content script failed, trying direct injection...');
+          
+          // Fallback: Direct injection
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: pasteWebhookResponseDirectly,
+            args: [aiResponse, query]
+          });
+          
+          console.log('✅ DIRECT INJECTION: AI response injected directly');
+          showSuccess('AI response copied and pasted successfully!');
+          return; // Exit early - we're done!
+        }
+        
+      } catch (error) {
+        console.error('Direct copy failed:', error);
+        // Continue with normal flow as fallback
+      }
+    }
+    
+    // If we have an AI response (aiResponse), use ONLY that and ignore RAG data completely
+    if (aiResponse !== null && aiResponse !== undefined) {
+      console.log('=== AI MODE: Using ONLY AI response from Flask API, completely ignoring RAG data ===');
+      
+      // Copy webhook response to clipboard first (TEXT ONLY - NO IMAGES)
+      try {
+        // Extract meaningful text from webhook response
+        let webhookText = '';
+        
+        if (typeof aiResponse === 'string') {
+          webhookText = aiResponse;
+        } else if (Array.isArray(aiResponse)) {
+          // Handle array responses (like from n8n workflows)
+          if (aiResponse.length > 0 && aiResponse[0].output) {
+            webhookText = aiResponse[0].output;
+          } else if (aiResponse.length > 0 && aiResponse[0].message) {
+            webhookText = aiResponse[0].message;
+          } else if (aiResponse.length > 0 && aiResponse[0].content) {
+            webhookText = aiResponse[0].content;
+          } else {
+            // If array doesn't have expected fields, stringify the first item
+            webhookText = JSON.stringify(aiResponse[0], null, 2);
+          }
+        } else if (aiResponse.output) {
+          webhookText = aiResponse.output;
+        } else if (aiResponse.message) {
+          webhookText = aiResponse.message;
+        } else if (aiResponse.content) {
+          webhookText = aiResponse.content;
+        } else if (aiResponse.response) {
+          webhookText = aiResponse.response;
+        } else if (aiResponse.text) {
+          webhookText = aiResponse.text;
+        } else if (aiResponse.answer) {
+          webhookText = aiResponse.answer;
+        } else if (aiResponse.result) {
+          webhookText = aiResponse.result;
+        } else if (aiResponse.data) {
+          webhookText = aiResponse.data;
+        } else {
+          // Fall back to JSON stringify for complex objects
+          webhookText = JSON.stringify(aiResponse, null, 2);
+        }
+        
         await navigator.clipboard.writeText(webhookText);
-        console.log('✓ Webhook response copied to clipboard');
+        console.log('✓ Webhook response (text only) copied to clipboard');
       } catch (clipboardError) {
         console.error('Failed to copy webhook response to clipboard:', clipboardError);
       }
@@ -1159,17 +1429,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         // First, try to ping the content script to see if it's ready
         await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
         
-        // If ping succeeds, send the webhook response
+        // If ping succeeds, send ONLY the AI response
         await chrome.tabs.sendMessage(tab.id, {
           action: 'pasteContent',
-          content: '', // Empty content since we only want webhook response
-          fullResponse: {}, // Empty full response
-          webhookResponse: aiResponse, // This is the webhook response
-          aiResponse: null // Don't pass aiResponse again
+          content: '', // Empty content since we only want AI response
+          fullResponse: {}, // Empty full response - no RAG data
+          webhookResponse: aiResponse, // This is the AI response from Flask API
+          aiResponse: aiResponse, // Pass the AI response
+          query: query // Pass the query for context
         });
         
-        console.log('✓ Webhook response sent to content script for pasting');
-        showSuccess('Webhook response copied to clipboard and pasted to chat successfully!');
+        console.log('✓ AI response sent to content script for pasting');
+        showSuccess('AI response (text only) copied to clipboard and pasted to chat successfully!');
         
       } catch (error) {
         console.error('Content script not ready or failed to send webhook response:', error);
@@ -1179,61 +1450,34 @@ document.addEventListener('DOMContentLoaded', async () => {
           await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             function: pasteWebhookResponseDirectly,
-            args: [aiResponse]
+            args: [aiResponse, query] // Pass both AI response and query
           });
           
-          console.log('✓ Webhook response injected directly via scripting');
-          showSuccess('Webhook response copied to clipboard and pasted to chat successfully!');
+          console.log('✓ AI response injected directly via scripting');
+          showSuccess('AI response (text only) copied to clipboard and pasted to chat successfully!');
           
         } catch (injectError) {
           console.error('Failed to inject webhook response directly:', injectError);
-          showError('Failed to paste webhook response. Please try again or check if you\'re on a supported page (ChatGPT/Perplexity).');
+          showError('Failed to paste AI response. Please try again or check if you\'re on a supported page (ChatGPT/Perplexity).');
         }
       }
       
-    } else {
-      // Fallback: if no webhook response, use the original RAG results
-      console.log('No webhook response, using RAG results...');
-      
-        const textOnlyResponse = removeBase64Data(data);
-      const textOnlyContent = formatTextOnlyContent(data, query, null);
-        
-      // Try to ensure content script is ready, then send RAG content
-      try {
-        // First, try to ping the content script to see if it's ready
-        await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
-        
-        // If ping succeeds, send the RAG content
-        await chrome.tabs.sendMessage(tab.id, {
-          action: 'pasteContent',
-          content: textOnlyContent,
-          fullResponse: textOnlyResponse,
-          webhookResponse: {}, // Empty webhook response
-          aiResponse: null
-        });
-        
-        console.log('✓ RAG content sent to content script for pasting');
-        showSuccess(`Retrieved ${data.hits?.length || 0} results. Content pasted to chat.`);
-        
-      } catch (error) {
-        console.error('Content script not ready or failed to send RAG content:', error);
-        
-        // Fallback: try to inject the content directly
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            function: pasteRAGContentDirectly,
-            args: [textOnlyContent]
-          });
-          
-          console.log('✓ RAG content injected directly via scripting');
-          showSuccess(`Retrieved ${data.hits?.length || 0} results. Content pasted to chat.`);
-          
-        } catch (injectError) {
-          console.error('Failed to inject RAG content directly:', injectError);
-          showError('Failed to paste content. Please try again or check if you\'re on a supported page (ChatGPT/Perplexity).');
+        } else {
+      // No webhook response - show error message instead of RAG results
+      console.log('=== NO WEBHOOK RESPONSE DEBUG ===');
+      console.log('aiResponse value:', aiResponse);
+      console.log('aiResponse type:', typeof aiResponse);
+      console.log('aiResponse is null:', aiResponse === null);
+      console.log('aiResponse is undefined:', aiResponse === undefined);
+      console.log('aiResponse is array:', Array.isArray(aiResponse));
+      if (Array.isArray(aiResponse)) {
+        console.log('Array length:', aiResponse.length);
+        if (aiResponse.length > 0) {
+          console.log('First item:', aiResponse[0]);
+          console.log('First item keys:', Object.keys(aiResponse[0]));
         }
       }
+      showError('No AI response received. Please check your AI agent configuration and try again.');
     }
   }
 
@@ -1610,7 +1854,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         showLoading(true);
         hideMessages();
         
-        const response = await fetch(`${apiUrl}/search_lc?query=${encodeURIComponent(query)}&k=${k}`);
+        const response = await fetch(`${apiUrl}/ai_search?query=${encodeURIComponent(query)}`);
         
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -1642,15 +1886,53 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // Fallback functions for direct content injection when content script is not available
-function pasteWebhookResponseDirectly(webhookResponse) {
+function pasteWebhookResponseDirectly(webhookResponse, query = '') {
   console.log('=== DIRECT WEBHOOK RESPONSE INJECTION ===');
   console.log('Webhook response:', webhookResponse);
+  console.log('Query:', query);
   
-  // Copy to clipboard first
+  // Copy to clipboard first (TEXT ONLY - NO IMAGES)
   try {
-    const webhookContent = JSON.stringify(webhookResponse, null, 2);
+    // Extract meaningful text from webhook response
+    let webhookContent = '';
+    
+    if (typeof webhookResponse === 'string') {
+      webhookContent = webhookResponse;
+    } else if (Array.isArray(webhookResponse)) {
+      // Handle array responses (like from n8n workflows)
+      if (webhookResponse.length > 0 && webhookResponse[0].output) {
+        webhookContent = webhookResponse[0].output;
+      } else if (webhookResponse.length > 0 && webhookResponse[0].message) {
+        webhookContent = webhookResponse[0].message;
+      } else if (webhookResponse.length > 0 && webhookResponse[0].content) {
+        webhookContent = webhookResponse[0].content;
+      } else {
+        // If array doesn't have expected fields, stringify the first item
+        webhookContent = JSON.stringify(webhookResponse[0], null, 2);
+      }
+    } else if (webhookResponse.output) {
+      webhookContent = webhookResponse.output;
+    } else if (webhookResponse.message) {
+      webhookContent = webhookResponse.message;
+    } else if (webhookResponse.content) {
+      webhookContent = webhookResponse.content;
+    } else if (webhookResponse.response) {
+      webhookContent = webhookResponse.response;
+    } else if (webhookResponse.text) {
+      webhookContent = webhookResponse.text;
+    } else if (webhookResponse.answer) {
+      webhookContent = webhookResponse.answer;
+    } else if (webhookResponse.result) {
+      webhookContent = webhookResponse.result;
+    } else if (webhookResponse.data) {
+      webhookContent = webhookResponse.data;
+    } else {
+      // Fall back to JSON stringify for complex objects
+      webhookContent = JSON.stringify(webhookResponse, null, 2);
+    }
+    
     navigator.clipboard.writeText(webhookContent).then(() => {
-      console.log('✓ Webhook response copied to clipboard');
+      console.log('✓ Webhook response (text only) copied to clipboard');
     }).catch(err => {
       console.error('Failed to copy webhook response to clipboard:', err);
     });
@@ -1700,9 +1982,7 @@ function pasteWebhookResponseDirectly(webhookResponse) {
       textarea.innerHTML = '';
     }
     
-    // Set the webhook response as JSON
-    const webhookContent = JSON.stringify(webhookResponse, null, 2);
-    
+    // Set the webhook response content
     if (textarea.contentEditable === 'true') {
       textarea.textContent = webhookContent;
     } else if (textarea.tagName === 'TEXTAREA') {

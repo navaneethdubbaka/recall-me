@@ -7,8 +7,6 @@ No RAG functionality - only handles AI agent responses.
 import os
 import time
 import uuid
-import subprocess
-import platform
 from typing import Any, Dict, Optional
 
 import requests
@@ -27,35 +25,6 @@ ai_responses: Dict[str, Any] = {}
 def _get_webhook_url() -> Optional[str]:
     """Get webhook URL from environment variable"""
     return os.getenv("WEBHOOK_URL")
-
-
-def _copy_to_clipboard(text: str) -> bool:
-    """Copy text to system clipboard"""
-    try:
-        system = platform.system()
-        
-        if system == "Windows":
-            # Windows: use clip command
-            subprocess.run(["clip"], input=text, text=True, check=True)
-        elif system == "Darwin":  # macOS
-            # macOS: use pbcopy
-            subprocess.run(["pbcopy"], input=text, text=True, check=True)
-        elif system == "Linux":
-            # Linux: try xclip first, then xsel
-            try:
-                subprocess.run(["xclip", "-selection", "clipboard"], input=text, text=True, check=True)
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                subprocess.run(["xsel", "--clipboard", "--input"], input=text, text=True, check=True)
-        else:
-            print(f"WARNING: Unsupported platform {system} for clipboard operations")
-            return False
-            
-        print(f"✓ Successfully copied {len(text)} characters to clipboard")
-        return True
-        
-    except Exception as e:
-        print(f"ERROR: Failed to copy to clipboard: {str(e)}")
-        return False
 
 
 def _post_to_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -114,70 +83,6 @@ def library():
     return render_template("library.html")
 
 
-@app.route("/chat", methods=["POST"])
-def chat() -> Any:
-    """Simple chat endpoint for web interface - redirects to AI functionality"""
-    try:
-        data = request.get_json()
-        message = data.get("message", "").strip()
-        
-        if not message:
-            return jsonify({"error": "Missing message"}), 400
-        
-        print(f"DEBUG: Chat request - message: {message}")
-        
-        # Use the same AI search functionality
-        payload = {"event": "chat_message", "query": message}
-        webhook_result = _post_to_webhook(payload)
-        
-        # Check if webhook result contains AI response
-        ai_response = None
-        if webhook_result.get("response"):
-            ai_response = webhook_result["response"]
-            print(f"DEBUG: AI response found in webhook result: {ai_response}")
-            
-            # DIRECT CLIPBOARD COPY: Copy AI response to clipboard immediately
-            if ai_response:
-                response_text = ""
-                if isinstance(ai_response, dict):
-                    if ai_response.get("output"):
-                        response_text = ai_response["output"]
-                    elif ai_response.get("message"):
-                        response_text = ai_response["message"]
-                    elif ai_response.get("content"):
-                        response_text = ai_response["content"]
-                    else:
-                        response_text = str(ai_response)
-                elif isinstance(ai_response, str):
-                    response_text = ai_response
-                else:
-                    response_text = str(ai_response)
-                
-                if response_text:
-                    print(f"DEBUG: Copying AI response to clipboard: {response_text[:100]}...")
-                    clipboard_success = _copy_to_clipboard(response_text)
-                    if clipboard_success:
-                        print("✓ AI response copied to clipboard successfully!")
-                    else:
-                        print("❌ Failed to copy AI response to clipboard")
-        
-        # Return response in the format expected by the web interface
-        result = {
-            "status": "success",
-            "webhook_response": webhook_result,
-            "clipboard_copied": ai_response is not None
-        }
-        if ai_response:
-            result["ai_response"] = ai_response
-            print(f"DEBUG: Added AI response to result")
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        print(f"ERROR: Exception in chat: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-
 @app.route("/ai_search", methods=["GET"])
 def ai_search() -> Any:
     """AI-only search endpoint - no RAG processing"""
@@ -197,41 +102,9 @@ def ai_search() -> Any:
     if webhook_result.get("response"):
         ai_response = webhook_result["response"]
         print(f"DEBUG: AI response found in webhook result: {ai_response}")
-        
-        # DIRECT CLIPBOARD COPY: Copy AI response to clipboard immediately
-        if ai_response:
-            response_text = ""
-            if isinstance(ai_response, dict):
-                if ai_response.get("output"):
-                    response_text = ai_response["output"]
-                elif ai_response.get("message"):
-                    response_text = ai_response["message"]
-                elif ai_response.get("content"):
-                    response_text = ai_response["content"]
-                else:
-                    response_text = str(ai_response)
-            elif isinstance(ai_response, str):
-                response_text = ai_response
-            else:
-                response_text = str(ai_response)
-            
-            if response_text:
-                print(f"DEBUG: Copying AI response to clipboard: {response_text[:100]}...")
-                clipboard_success = _copy_to_clipboard(response_text)
-                if clipboard_success:
-                    print("✓ AI response copied to clipboard successfully!")
-                else:
-                    print("❌ Failed to copy AI response to clipboard")
     
     # Return only AI response and webhook info
-    result = {
-        "status": "success",
-        "webhook": webhook_result,
-        "hits": [],
-        "images": {},
-        "image_paths": {},
-        "clipboard_copied": ai_response is not None
-    }
+    result = {"webhook": webhook_result}
     if ai_response:
         result["ai_response"] = ai_response
         print(f"DEBUG: Added AI response to result")

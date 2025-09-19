@@ -118,6 +118,8 @@ document.addEventListener('DOMContentLoaded', function() {
             addMessage(responseData.response);
           } else if (responseData.text) {
             addMessage(responseData.text);
+          } else if (responseData.output) {
+            addMessage(responseData.output);
           } else if (typeof responseData === 'string') {
             addMessage(responseData);
           } else {

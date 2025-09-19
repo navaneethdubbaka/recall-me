@@ -199,77 +199,118 @@ async function performQuickSearch(search, tab) {
           title: 'Recall Me Error',
           message: `Webhook failed: ${webhookErr.message}`
         });
+        // Do NOT continue with RAG results when webhook fails
+        return;
       }
     }
     
-    // Format the content
-    const formattedContent = formatSearchResultsForQuickSearch(data, search.query);
-    
-    // Copy content to clipboard first (webhook response or RAG content)
-    try {
-      let contentToCopy = '';
-      if (webhookResponse) {
-        contentToCopy = JSON.stringify(webhookResponse, null, 2);
-      } else {
-        contentToCopy = formattedContent;
+    // When webhook is enabled, only process webhook response
+    if (search.enableAI && search.webhookUrl) {
+      if (!webhookResponse) {
+        // Webhook was enabled but no response received - exit
+        console.log('Webhook enabled but no response received');
+        return;
       }
       
-      // Use chrome.scripting to copy to clipboard since background script doesn't have direct clipboard access
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        function: copyToClipboard,
-        args: [contentToCopy]
-      });
-      console.log('✓ Content copied to clipboard');
+      // Only process webhook response
+      const contentToCopy = JSON.stringify(webhookResponse, null, 2);
+      console.log('Copying webhook response (text only) to clipboard');
       
-    } catch (clipboardError) {
-      console.error('Failed to copy content to clipboard:', clipboardError);
-    }
-    
-    // Try to ensure content script is ready, then send content
-    try {
-      // First, try to ping the content script to see if it's ready
-      await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
-      
-      // If ping succeeds, send the content
-      await chrome.tabs.sendMessage(tab.id, {
-        action: 'pasteContent',
-        content: webhookResponse ? '' : formattedContent, // Empty content if webhook response exists
-        fullResponse: webhookResponse ? {} : data, // Empty full response if webhook response exists
-        webhookResponse: webhookResponse || data.webhook, // Use webhook response if available
-        aiResponse: null
-      });
-      
-      console.log('✓ Content sent to content script successfully');
-      
-    } catch (error) {
-      console.error('Content script not ready or failed to send content:', error);
-      
-      // Fallback: try to inject content directly
+      // Copy webhook response to clipboard
       try {
-        if (webhookResponse) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          function: copyToClipboard,
+          args: [contentToCopy]
+        });
+        console.log('✓ Webhook response (text only) copied to clipboard');
+      } catch (clipboardError) {
+        console.error('Failed to copy webhook response to clipboard:', clipboardError);
+      }
+      
+      // Send webhook response to content script
+      try {
+        await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
+        await chrome.tabs.sendMessage(tab.id, {
+          action: 'pasteContent',
+          content: '', // Empty content since we only want webhook response
+          fullResponse: {}, // Empty full response
+          webhookResponse: webhookResponse, // This is the webhook response
+          aiResponse: null
+        });
+        console.log('✓ Webhook response sent to content script successfully');
+      } catch (error) {
+        console.error('Content script not ready or failed to send webhook response:', error);
+        // Fallback: try to inject the content directly
+        try {
           await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             function: pasteWebhookResponseDirectly,
             args: [webhookResponse]
           });
           console.log('✓ Webhook response injected directly via scripting');
-        } else {
+        } catch (injectError) {
+          console.error('Failed to inject webhook response directly:', injectError);
+        }
+      }
+      
+    } else {
+      // Webhook not enabled - process RAG content
+      const formattedContent = formatSearchResultsForQuickSearch(data, search.query);
+      
+      // Copy RAG content to clipboard first (TEXT ONLY - NO IMAGES)
+      try {
+        const contentToCopy = formattedContent;
+        console.log('Copying RAG content (text only) to clipboard');
+        
+        // Use chrome.scripting to copy to clipboard since background script doesn't have direct clipboard access
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          function: copyToClipboard,
+          args: [contentToCopy]
+        });
+        console.log('✓ RAG content (text only) copied to clipboard');
+        
+      } catch (clipboardError) {
+        console.error('Failed to copy RAG content to clipboard:', clipboardError);
+      }
+      
+      // Try to ensure content script is ready, then send RAG content
+      try {
+        // First, try to ping the content script to see if it's ready
+        await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
+        
+        // If ping succeeds, send the RAG content
+        await chrome.tabs.sendMessage(tab.id, {
+          action: 'pasteContent',
+          content: formattedContent,
+          fullResponse: data,
+          webhookResponse: {}, // Empty webhook response
+          aiResponse: null
+        });
+        
+        console.log('✓ RAG content sent to content script successfully');
+        
+      } catch (error) {
+        console.error('Content script not ready or failed to send RAG content:', error);
+        
+        // Fallback: try to inject RAG content directly
+        try {
           await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             function: pasteRAGContentDirectly,
             args: [formattedContent]
           });
           console.log('✓ RAG content injected directly via scripting');
+        } catch (injectError) {
+          console.error('Failed to inject RAG content directly:', injectError);
+          chrome.notifications.create({
+            type: 'basic',
+            iconUrl: 'icon.png',
+            title: 'Recall Me Error',
+            message: 'Failed to paste content. Please try again or check if you\'re on a supported page.'
+          });
         }
-      } catch (injectError) {
-        console.error('Failed to inject content directly:', injectError);
-        chrome.notifications.create({
-          type: 'basic',
-          iconUrl: 'icon.png',
-          title: 'Recall Me Error',
-          message: 'Failed to paste content. Please try again or check if you\'re on a supported page.'
-        });
       }
     }
     
@@ -367,11 +408,15 @@ async function pollForWebhookResponseQuick(webhookUrl, sessionId, attempt = 0) {
     if (pollResponse.ok) {
       const responseData = await pollResponse.json();
       
-      if (responseData.status === 'completed' || responseData.message || responseData.content || responseData.response) {
+      if (responseData && (responseData.status === 'completed' || responseData.message || responseData.content || responseData.response || Object.keys(responseData).length > 0)) {
         console.log('✓ Quick webhook response received:', responseData);
         return responseData;
-      } else if (responseData.status === 'processing' || responseData.status === 'pending') {
+      } else if (responseData && (responseData.status === 'processing' || responseData.status === 'pending')) {
         return await pollForWebhookResponseQuick(webhookUrl, sessionId, attempt + 1);
+      } else if (responseData && responseData !== null && responseData !== undefined) {
+        // Any other response that's not null/undefined should be accepted
+        console.log('✓ Quick webhook response received (any format):', responseData);
+        return responseData;
       }
     }
     
@@ -438,11 +483,11 @@ function pasteWebhookResponseDirectly(webhookResponse) {
   console.log('=== DIRECT WEBHOOK RESPONSE INJECTION (BACKGROUND) ===');
   console.log('Webhook response:', webhookResponse);
   
-  // Copy to clipboard first
+  // Copy to clipboard first (TEXT ONLY - NO IMAGES)
   try {
     const webhookContent = JSON.stringify(webhookResponse, null, 2);
     navigator.clipboard.writeText(webhookContent).then(() => {
-      console.log('✓ Webhook response copied to clipboard (background)');
+      console.log('✓ Webhook response (text only) copied to clipboard (background)');
     }).catch(err => {
       console.error('Failed to copy webhook response to clipboard (background):', err);
     });
